@@ -1,0 +1,71 @@
+# --- PROJECT SCRAPS (Things we don't need to share) ---
+
+# Built objects and temporary files
+*.pyc
+*.obj
+*.exe
+*.log
+*.swp
+*.class
+
+# Android specific (The "Kitchen Mess" after cooking)
+build/
+bin/
+gen/
+out/
+
+# Gradle (The "Engine Parts" that get rebuilt)
+.gradle/
+gradle-app.setting
+!gradle-wrapper.jar
+.gradletasknamecache
+
+# IntelliJ IDEA (Android Studio's personal notes)
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Local secrets (Your home address - keep it private!)
+local.properties
+
+# Android Studio Captures
+captures/
+
+# Keystore files (The keys to your app's front door)
+*.jks
+*.keystore
+
+# Google Services
+google-services.json
+
+# Proguard
+/proguard/
+
+# OS Specific
+.DS_Store
+
+# NDK
+obj/
+
+# Crashlytics
+com_crashlytics_export_strings.xml
+crashlytics.properties
+crashlytics-build.properties
+
+# Android Studio internal caches
+.idea/caches/
+.idea/libraries/
+.idea/modules.xml
+.idea/workspace.xml
+.idea/navEditor.xml
+.idea/assetWizardSettings.xml
+
+# Backup files
+*~
+*.bak
+
+# Others
+.kotlin/
+.externalNativeBuild
+.cxx
