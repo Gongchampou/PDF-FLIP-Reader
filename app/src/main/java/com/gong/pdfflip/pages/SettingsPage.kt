@@ -10,6 +10,7 @@ package com.gong.pdfflip.pages
  */
 
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -22,12 +23,14 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -57,11 +60,29 @@ import androidx.compose.foundation.lazy.items
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onThemeChanged: (Int) -> Unit) {
+fun SettingsScreen(
+    onBack: () -> Unit, 
+    onThemeChanged: (Int) -> Unit,
+    pageModeIndex: Int,
+    flipStyleIndex: Int,
+    scrollStyleIndex: Int,
+    titleFontSizeIndex: Int,
+    onPrefsChanged: (Int, Int, Int, Int) -> Unit
+) {
+    BackHandler(onBack = onBack)
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val clipboardManager = LocalClipboardManager.current
     val uriHandler = LocalUriHandler.current
+
+    // Preference saving helper
+    fun savePrefs(mode: Int, flip: Int, scroll: Int, font: Int) {
+        onPrefsChanged(mode, flip, scroll, font)
+        scope.launch(Dispatchers.IO) {
+            val prefsFile = File(context.filesDir, "reader_prefs.txt")
+            prefsFile.writeText("$mode|$flip|$scroll|$font")
+        }
+    }
     
     // Theme Options
     val themeOptions = listOf(
@@ -329,6 +350,108 @@ fun SettingsScreen(onBack: () -> Unit, onThemeChanged: (Int) -> Unit) {
                                     }
                                 )
                             }
+                        }
+                    }
+                }
+            }
+
+            // --- SECTION 1.5: READING EXPERIENCE (FLIP/SCROLL) ---
+            item {
+                Spacer(Modifier.height(8.dp))
+                SettingsSectionHeader(title = "Reading Experience", icon = Icons.Default.MenuBook, tint = currentTextColor)
+                
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.3f)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        // Page Mode Toggle
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                            Text("Default Mode", fontSize = 14.sp, color = currentTextColor)
+                            Row {
+                                FilterChip(
+                                    selected = pageModeIndex == 0,
+                                    onClick = { savePrefs(0, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex) },
+                                    label = { Text("Flip", fontSize = 12.sp) }
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                FilterChip(
+                                    selected = pageModeIndex == 1,
+                                    onClick = { savePrefs(1, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex) },
+                                    label = { Text("Scroll", fontSize = 12.sp) }
+                                )
+                            }
+                        }
+                        
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = currentTextColor.copy(alpha = 0.1f))
+                        
+                        if (pageModeIndex == 0) {
+                            // Flip Style
+                            Text("Flip Transition", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = currentTextColor.copy(alpha = 0.6f))
+                            Row(modifier = Modifier.padding(top = 4.dp)) {
+                                FilterChip(
+                                    selected = flipStyleIndex == 0,
+                                    onClick = { savePrefs(pageModeIndex, 0, scrollStyleIndex, titleFontSizeIndex) },
+                                    label = { Text("Normal", fontSize = 12.sp) }
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                FilterChip(
+                                    selected = flipStyleIndex == 1,
+                                    onClick = { savePrefs(pageModeIndex, 1, scrollStyleIndex, titleFontSizeIndex) },
+                                    label = { Text("Natural Paper", fontSize = 12.sp) }
+                                )
+                            }
+                        } else {
+                            // Scroll Style
+                            Text("Scroll Style", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = currentTextColor.copy(alpha = 0.6f))
+                            Row(modifier = Modifier.padding(top = 4.dp)) {
+                                FilterChip(
+                                    selected = scrollStyleIndex == 0,
+                                    onClick = { savePrefs(pageModeIndex, flipStyleIndex, 0, titleFontSizeIndex) },
+                                    label = { Text("Page Snap", fontSize = 12.sp) }
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                FilterChip(
+                                    selected = scrollStyleIndex == 1,
+                                    onClick = { savePrefs(pageModeIndex, flipStyleIndex, 1, titleFontSizeIndex) },
+                                    label = { Text("Smooth Flow", fontSize = 12.sp) }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // --- SECTION 1.6: LIBRARY UI (FONT SIZE) ---
+            item {
+                Spacer(Modifier.height(8.dp))
+                SettingsSectionHeader(title = "Library UI", icon = Icons.Default.TextFields, tint = currentTextColor)
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.3f)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("Book Title Font Size", fontSize = 14.sp, color = currentTextColor)
+                        Row(modifier = Modifier.padding(top = 8.dp)) {
+                            FilterChip(
+                                selected = titleFontSizeIndex == 0,
+                                onClick = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, 0) },
+                                label = { Text("Small", fontSize = 12.sp) }
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            FilterChip(
+                                selected = titleFontSizeIndex == 1,
+                                onClick = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, 1) },
+                                label = { Text("Medium", fontSize = 12.sp) }
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            FilterChip(
+                                selected = titleFontSizeIndex == 2,
+                                onClick = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, 2) },
+                                label = { Text("Large", fontSize = 12.sp) }
+                            )
                         }
                     }
                 }

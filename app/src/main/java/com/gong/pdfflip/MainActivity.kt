@@ -33,19 +33,47 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             var themeIndex by remember { mutableIntStateOf(2) }
+            var pageModeIndex by remember { mutableIntStateOf(0) } // 0: Flip, 1: Scroll
+            var flipStyleIndex by remember { mutableIntStateOf(0) } // 0: Normal, 1: Natural
+            var scrollStyleIndex by remember { mutableIntStateOf(0) } // 0: Page, 1: Smooth
+            var titleFontSizeIndex by remember { mutableIntStateOf(1) } // 0: Small, 1: Medium, 2: Large
             
-            // Load theme on startup
+            // Load settings on startup
             LaunchedEffect(Unit) {
                 val themeFile = java.io.File(filesDir, "app_theme.txt")
-                if (themeFile.exists()) {
-                    themeIndex = themeFile.readText().toIntOrNull() ?: 2
+                if (themeFile.exists()) themeIndex = themeFile.readText().toIntOrNull() ?: 2
+                
+                val prefsFile = java.io.File(filesDir, "reader_prefs.txt")
+                if (prefsFile.exists()) {
+                    val parts = prefsFile.readText().split("|")
+                    if (parts.size >= 3) {
+                        pageModeIndex = parts[0].toIntOrNull() ?: 0
+                        flipStyleIndex = parts[1].toIntOrNull() ?: 0
+                        scrollStyleIndex = parts[2].toIntOrNull() ?: 0
+                    }
+                    if (parts.size >= 4) {
+                        titleFontSizeIndex = parts[3].toIntOrNull() ?: 1
+                    }
                 }
             }
 
             PDFFlipTheme(themeIndex = themeIndex) {
                 MainAppNavigation(
                     currentTheme = themeIndex,
-                    onThemeChange = { themeIndex = it }
+                    onThemeChange = { themeIndex = it },
+                    pageModeIndex = pageModeIndex,
+                    flipStyleIndex = flipStyleIndex,
+                    scrollStyleIndex = scrollStyleIndex,
+                    titleFontSizeIndex = titleFontSizeIndex,
+                    onPrefsChange = { mode, flip, scroll, font ->
+                        pageModeIndex = mode
+                        flipStyleIndex = flip
+                        scrollStyleIndex = scroll
+                        titleFontSizeIndex = font
+                        // Save to storage
+                        val prefsFile = java.io.File(filesDir, "reader_prefs.txt")
+                        prefsFile.writeText("$mode|$flip|$scroll|$font")
+                    }
                 )
             }
         }
@@ -53,39 +81,67 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun MainAppNavigation(currentTheme: Int, onThemeChange: (Int) -> Unit) {
+fun MainAppNavigation(
+    currentTheme: Int, 
+    onThemeChange: (Int) -> Unit,
+    pageModeIndex: Int,
+    flipStyleIndex: Int,
+    scrollStyleIndex: Int,
+    titleFontSizeIndex: Int,
+    onPrefsChange: (Int, Int, Int, Int) -> Unit
+) {
     // Current screen state
     var currentScreen by remember { mutableStateOf(Screen.Library) }
     // Selected PDF URI and page
     var selectedUri by remember { mutableStateOf<Uri?>(null) }
+    var selectedBookName by remember { mutableStateOf<String?>(null) }
     var startPage by remember { mutableIntStateOf(0) }
+    var sourceUriStr by remember { mutableStateOf<String?>(null) }
 
     when (currentScreen) {
         Screen.Library -> {
             LibraryScreen(
-                onBookClick = { uri, page ->
-                    selectedUri = uri
-                    startPage = page
+                onBookClick = { book ->
+                    selectedUri = book.uri
+                    selectedBookName = book.name
+                    startPage = book.currentPage
+                    sourceUriStr = book.sourceUri
                     currentScreen = Screen.Reader
                 },
                 onSettingsClick = {
                     currentScreen = Screen.Settings
-                }
+                },
+                titleFontSizeIndex = titleFontSizeIndex
             )
         }
         Screen.Reader -> {
             selectedUri?.let { uri ->
                 ReaderScreen(
                     uri = uri, 
+                    fileName = selectedBookName ?: uri.lastPathSegment ?: "Unknown",
+                    sourceUriStr = sourceUriStr,
                     initialPage = startPage,
-                    onBack = { currentScreen = Screen.Library }
+                    initialPageModeIndex = pageModeIndex,
+                    flipStyleIndex = flipStyleIndex,
+                    scrollStyleIndex = scrollStyleIndex,
+                    onBack = { currentScreen = Screen.Library },
+                    onPageModeToggle = { newMode -> 
+                        onPrefsChange(newMode, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex)
+                        // Save immediately
+                        // (We'll handle save logic in a helper or passed lambda)
+                    }
                 )
             }
         }
         Screen.Settings -> {
             SettingsScreen(
                 onBack = { currentScreen = Screen.Library },
-                onThemeChanged = onThemeChange
+                onThemeChanged = onThemeChange,
+                pageModeIndex = pageModeIndex,
+                flipStyleIndex = flipStyleIndex,
+                scrollStyleIndex = scrollStyleIndex,
+                titleFontSizeIndex = titleFontSizeIndex,
+                onPrefsChanged = onPrefsChange
             )
         }
     }

@@ -64,6 +64,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -79,17 +80,33 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
 
-// Data class to store our strokes for saving
-data class DrawingStroke(val points: List<Offset>)
+// Data class to store our strokes for saving (Points are normalized 0f..1f)
+data class DrawingStroke(val points: List<Offset>, val color: Color = Color.Red)
 
 enum class PageMode {
     HorizontalFlip,
     VerticalScroll
 }
 
+enum class SpeechState {
+    Stopped,
+    Playing,
+    Paused
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ReaderScreen(uri: Uri, initialPage: Int = 0, onBack: () -> Unit) {
+fun ReaderScreen(
+    uri: Uri, 
+    fileName: String,
+    sourceUriStr: String? = null,
+    initialPage: Int = 0, 
+    initialPageModeIndex: Int = 0,
+    flipStyleIndex: Int = 0,
+    scrollStyleIndex: Int = 0,
+    onBack: () -> Unit,
+    onPageModeToggle: (Int) -> Unit
+) {
     BackHandler(onBack = onBack)
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -104,10 +121,14 @@ fun ReaderScreen(uri: Uri, initialPage: Int = 0, onBack: () -> Unit) {
     var showNoteDialog by remember { mutableStateOf(false) }
     var isBookmarked by remember { mutableStateOf(false) }
     var isDrawingMode by remember { mutableStateOf(false) }
-    var isSpeaking by remember { mutableStateOf(false) }
+    var selectedPenColor by remember { mutableStateOf(Color.Red) }
+    var showColorPicker by remember { mutableStateOf(false) }
     var showDiscardDialog by remember { mutableStateOf(false) }
-    var pageMode by remember { mutableStateOf(PageMode.HorizontalFlip) }
+    var pageMode by remember { mutableStateOf(if (initialPageModeIndex == 0) PageMode.HorizontalFlip else PageMode.VerticalScroll) }
     
+    val pagerState = rememberPagerState(initialPage = initialPage.coerceIn(0, if (pageCount > 0) pageCount - 1 else 0), pageCount = { pageCount })
+    var tts by remember { mutableStateOf<TextToSpeech?>(null) }
+
     // Zoom States (Flexible/Spring Animated)
     var isZoomMode by remember { mutableStateOf(false) }
     var targetScale by remember { mutableFloatStateOf(1f) }
@@ -123,16 +144,159 @@ fun ReaderScreen(uri: Uri, initialPage: Int = 0, onBack: () -> Unit) {
         animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
         label = "ZoomOffset"
     )
-    
-    // Drawing State: Page Index -> List of Strokes
+
+    // Drawing States
     val pageStrokes: SnapshotStateMap<Int, SnapshotStateList<DrawingStroke>> = remember { mutableStateMapOf() }
-    // Redo State: Page Index -> List of Redo Strokes
     val redoStrokes: SnapshotStateMap<Int, SnapshotStateList<DrawingStroke>> = remember { mutableStateMapOf() }
+    
+    // TTS States
+    var speechState by remember { mutableStateOf(SpeechState.Stopped) }
+    var currentSentences by remember { mutableStateOf(emptyList<String>()) }
+    var currentSentenceIndex by remember { mutableIntStateOf(0) }
+    var ttsSourcePage by remember { mutableIntStateOf(-1) }
 
-    val pagerState = rememberPagerState(initialPage = initialPage.coerceIn(0, if (pageCount > 0) pageCount - 1 else 0), pageCount = { pageCount })
+    fun speakCurrentSentence(engine: TextToSpeech?, list: List<String>, index: Int) {
+        if (engine != null && index in list.indices) {
+            val params = Bundle()
+            params.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "ReaderTTS_$index")
+            engine.speak(list[index], TextToSpeech.QUEUE_FLUSH, params, "ReaderTTS_$index")
+        }
+    }
 
-    // TTS Engine
-    var tts by remember { mutableStateOf<TextToSpeech?>(null) }
+    fun handleSpeechStop() {
+        tts?.stop()
+        speechState = SpeechState.Stopped
+        currentSentenceIndex = 0
+    }
+
+    fun handleSpeechToggle() {
+        when (speechState) {
+            SpeechState.Playing -> {
+                tts?.stop()
+                speechState = SpeechState.Paused
+            }
+            SpeechState.Paused -> {
+                speakCurrentSentence(tts, currentSentences, currentSentenceIndex)
+            }
+            SpeechState.Stopped -> {
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        val inputStream = context.contentResolver.openInputStream(uri)
+                        if (inputStream != null) {
+                            val document = PDDocument.load(inputStream)
+                            val stripper = PDFTextStripper()
+                            stripper.startPage = pagerState.currentPage + 1
+                            stripper.endPage = pagerState.currentPage + 1
+                            val pageText = stripper.getText(document).trim()
+                            document.close()
+                            inputStream.close()
+                            
+                            withContext(Dispatchers.Main) {
+                                if (pageText.isNotEmpty()) {
+                                    val cleaned = pageText
+                                        .replace(Regex("(?<=[a-z])-\\n(?=[a-z])"), "") 
+                                        .replace(Regex("\\n"), " ") 
+                                        .replace(Regex("\\s+"), " ") 
+                                        .trim()
+                                    
+                                    // Split into sentences using common delimiters
+                                    currentSentences = cleaned.split(Regex("(?<=[.!?])\\s+"))
+                                    currentSentenceIndex = 0
+                                    ttsSourcePage = pagerState.currentPage
+                                    speakCurrentSentence(tts, currentSentences, 0)
+                                } else {
+                                    Toast.makeText(context, "No text found on this page", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    } catch (e: Exception) { e.printStackTrace() }
+                }
+            }
+        }
+    }
+
+    // Function to handle the actual saving logic
+    fun saveEditsToPdf() {
+        scope.launch(Dispatchers.IO) {
+            try {
+                withContext(Dispatchers.Main) { Toast.makeText(context, "Saving...", Toast.LENGTH_SHORT).show() }
+                
+                pdfRenderer?.close()
+                pdfRenderer = null
+                
+                val inputStream = context.contentResolver.openInputStream(uri)
+                val document = PDDocument.load(inputStream)
+                document.setAllSecurityToBeRemoved(true)
+                
+                pageStrokes.forEach { (pageIdx, strokes) ->
+                    if (pageIdx < document.numberOfPages) {
+                        val page = document.getPage(pageIdx)
+                        val mBox = page.mediaBox
+                        
+                        val contentStream = PDPageContentStream(document, page, PDPageContentStream.AppendMode.APPEND, true, true)
+                        
+                        strokes.forEach { stroke ->
+                            if (stroke.points.isNotEmpty()) {
+                                val r = (stroke.color.red * 255).toInt()
+                                val g = (stroke.color.green * 255).toInt()
+                                val b = (stroke.color.blue * 255).toInt()
+                                
+                                contentStream.setStrokingColor(r, g, b)
+                                contentStream.setLineWidth(3f)
+                                
+                                val first = stroke.points.first()
+                                val startX = mBox.lowerLeftX + (first.x * mBox.width)
+                                val startY = mBox.lowerLeftY + (mBox.height - (first.y * mBox.height))
+                                
+                                contentStream.moveTo(startX, startY)
+                                
+                                stroke.points.forEach { pt ->
+                                    val nextX = mBox.lowerLeftX + (pt.x * mBox.width)
+                                    val nextY = mBox.lowerLeftY + (mBox.height - (pt.y * mBox.height))
+                                    contentStream.lineTo(nextX, nextY)
+                                }
+                                contentStream.stroke()
+                            }
+                        }
+                        contentStream.close()
+                    }
+                }
+                
+                val outputStream = context.contentResolver.openOutputStream(uri, "rwt")
+                if (outputStream != null) {
+                    document.save(outputStream)
+                    outputStream.flush()
+                    outputStream.close()
+                }
+                
+                document.close()
+                inputStream?.close()
+                
+                val pfd = context.contentResolver.openFileDescriptor(uri, "r")
+                pfd?.let { pdfRenderer = PdfRenderer(it) }
+                
+                withContext(Dispatchers.Main) {
+                    pageStrokes.clear()
+                    redoStrokes.clear()
+                    isDrawingMode = false
+                    Toast.makeText(context, "Saved Successfully!", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "Save Failed: ${e.message}", Toast.LENGTH_LONG).show()
+                    if (pdfRenderer == null) {
+                        try {
+                            val pfd = context.contentResolver.openFileDescriptor(uri, "r")
+                            pfd?.let { pdfRenderer = PdfRenderer(it) }
+                        } catch (ex: Exception) { ex.printStackTrace() }
+                    }
+                }
+            }
+        }
+    }
+
+    // TTS Engine Initialization
     LaunchedEffect(Unit) {
         PDFBoxResourceLoader.init(context) 
         val newTts = TextToSpeech(context) { status ->
@@ -140,18 +304,38 @@ fun ReaderScreen(uri: Uri, initialPage: Int = 0, onBack: () -> Unit) {
                 tts?.setLanguage(Locale.US)
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) { 
-                        scope.launch(Dispatchers.Main) { isSpeaking = true }
+                        scope.launch(Dispatchers.Main) { speechState = SpeechState.Playing }
                     }
                     override fun onDone(utteranceId: String?) { 
-                        scope.launch(Dispatchers.Main) { isSpeaking = false }
+                        scope.launch(Dispatchers.Main) {
+                            if (speechState == SpeechState.Playing) { // Safety: Only continue if the user hasn't paused/stopped
+                                if (currentSentenceIndex < currentSentences.size - 1) {
+                                    currentSentenceIndex++
+                                    speakCurrentSentence(tts, currentSentences, currentSentenceIndex)
+                                } else {
+                                    speechState = SpeechState.Stopped
+                                    currentSentenceIndex = 0
+                                }
+                            }
+                        }
                     }
                     override fun onError(utteranceId: String?) { 
-                        scope.launch(Dispatchers.Main) { isSpeaking = false }
+                        scope.launch(Dispatchers.Main) { 
+                            speechState = SpeechState.Stopped
+                            Toast.makeText(context, "Voice engine error", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 })
             }
         }
         tts = newTts
+    }
+
+    // Reset TTS if page changes while playing
+    LaunchedEffect(pagerState.currentPage) {
+        if (speechState != SpeechState.Stopped && ttsSourcePage != pagerState.currentPage) {
+            handleSpeechStop()
+        }
     }
 
     // Initialize Renderer
@@ -178,7 +362,6 @@ fun ReaderScreen(uri: Uri, initialPage: Int = 0, onBack: () -> Unit) {
     // Save current page to local storage (No Sync - Pure Local Memory)
     LaunchedEffect(pagerState.currentPage) {
         if (pageCount > 0) {
-            val fileName = uri.lastPathSegment ?: return@LaunchedEffect
             scope.launch(Dispatchers.IO) {
                 val recentFile = java.io.File(context.filesDir, "recent_data.txt")
                 val lines = if (recentFile.exists()) recentFile.readLines().toMutableList() else mutableListOf()
@@ -233,6 +416,7 @@ fun ReaderScreen(uri: Uri, initialPage: Int = 0, onBack: () -> Unit) {
                             tint = currentTextColor
                         ) { 
                             pageMode = if (pageMode == PageMode.HorizontalFlip) PageMode.VerticalScroll else PageMode.HorizontalFlip 
+                            onPageModeToggle(if (pageMode == PageMode.HorizontalFlip) 0 else 1)
                         }
 
                         ReaderToolIcon(Icons.Default.Fullscreen, "Full Screen", currentTextColor) { isFullScreen = true }
@@ -247,52 +431,20 @@ fun ReaderScreen(uri: Uri, initialPage: Int = 0, onBack: () -> Unit) {
                     ReaderToolIcon(if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder, "Bookmark", currentTextColor) { isBookmarked = !isBookmarked }
                     ReaderToolIcon(Icons.AutoMirrored.Filled.NoteAdd, "Notes", currentTextColor) { showNoteDialog = true }
                     
-                    ReaderToolIcon(if (isSpeaking) Icons.Default.Stop else Icons.AutoMirrored.Filled.VolumeUp, "Read Aloud", currentTextColor) {
-                        if (isSpeaking) {
-                            tts?.stop()
-                            isSpeaking = false
-                        } else {
-                            scope.launch(Dispatchers.IO) {
-                                try {
-                                    val inputStream = context.contentResolver.openInputStream(uri)
-                                    if (inputStream != null) {
-                                        val document = PDDocument.load(inputStream)
-                                        val stripper = PDFTextStripper()
-                                        stripper.startPage = pagerState.currentPage + 1
-                                        stripper.endPage = pagerState.currentPage + 1
-                                        val pageText = stripper.getText(document).trim()
-                                        document.close()
-                                        inputStream.close()
-                                        
-                                        withContext(Dispatchers.Main) {
-                                            if (pageText.isNotEmpty()) {
-                                                val naturalText = pageText
-                                                    .replace(Regex("(?<=[a-z])-\\n(?=[a-z])"), "") 
-                                                    .replace(Regex("\\n"), " ") 
-                                                    .replace(Regex("\\s+"), " ") 
-                                                    .trim()
+                    ReaderToolIcon(
+                        icon = when (speechState) {
+                            SpeechState.Playing -> Icons.Default.Pause
+                            else -> Icons.AutoMirrored.Filled.VolumeUp
+                        }, 
+                        description = "Read Aloud", 
+                        tint = currentTextColor
+                    ) {
+                        handleSpeechToggle()
+                    }
 
-                                                val params = Bundle()
-                                                params.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "ReaderTTS")
-                                                tts?.setPitch(1.0f)
-                                                tts?.setSpeechRate(0.95f)
-                                                
-                                                val result = tts?.speak(naturalText, TextToSpeech.QUEUE_FLUSH, params, "ReaderTTS")
-                                                if (result == TextToSpeech.ERROR) {
-                                                    Toast.makeText(context, "Voice engine error", Toast.LENGTH_SHORT).show()
-                                                }
-                                            } else {
-                                                Toast.makeText(context, "This page seems to be an image (No text found)", Toast.LENGTH_LONG).show()
-                                            }
-                                        }
-                                    }
-                                } catch (e: Exception) {
-                                    e.printStackTrace()
-                                    withContext(Dispatchers.Main) {
-                                        Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                            }
+                    if (speechState != SpeechState.Stopped) {
+                        ReaderToolIcon(Icons.Default.Stop, "Stop Aloud", Color.Red) {
+                            handleSpeechStop()
                         }
                     }
 
@@ -300,6 +452,17 @@ fun ReaderScreen(uri: Uri, initialPage: Int = 0, onBack: () -> Unit) {
                     ReaderToolIcon(if (isDrawingMode) Icons.Default.EditOff else Icons.Default.Edit, "Draw", currentTextColor) { isDrawingMode = !isDrawingMode }
                     
                     if (isDrawingMode) {
+                        // Pen Color Picker
+                        Box {
+                            Box(
+                                modifier = Modifier
+                                    .padding(8.dp)
+                                    .size(20.dp)
+                                    .background(selectedPenColor, CircleShape)
+                                    .clickable { showColorPicker = true }
+                            )
+                        }
+
                         // Undo
                         ReaderToolIcon(
                             icon = Icons.AutoMirrored.Filled.Undo, 
@@ -328,81 +491,7 @@ fun ReaderScreen(uri: Uri, initialPage: Int = 0, onBack: () -> Unit) {
 
                         // Save Permanent
                         ReaderToolIcon(Icons.Default.Check, "Save Permanent", Color.Green) {
-                            scope.launch(Dispatchers.IO) {
-                                try {
-                                    withContext(Dispatchers.Main) { Toast.makeText(context, "Saving...", Toast.LENGTH_SHORT).show() }
-                                    pdfRenderer?.close()
-                                    pdfRenderer = null
-                                    val inputStream = context.contentResolver.openInputStream(uri)
-                                    val document = PDDocument.load(inputStream)
-                                    document.setAllSecurityToBeRemoved(true) 
-                                    
-                                    pageStrokes.forEach { (pageIdx, strokes) ->
-                                        val page = document.getPage(pageIdx)
-                                        val contentStream = PDPageContentStream(document, page, PDPageContentStream.AppendMode.APPEND, true, true)
-                                        contentStream.setStrokingColor(255, 0, 0)
-                                        contentStream.setLineWidth(3f)
-                                        strokes.forEach { stroke ->
-                                            if (stroke.points.isNotEmpty()) {
-                                                val first = stroke.points.first()
-                                                contentStream.moveTo(first.x / 2, page.mediaBox.height - (first.y / 2))
-                                                stroke.points.forEach { pt ->
-                                                    contentStream.lineTo(pt.x / 2, page.mediaBox.height - (pt.y / 2))
-                                                }
-                                                contentStream.stroke()
-                                            }
-                                        }
-                                        contentStream.close()
-                                    }
-
-                                    val outputStream = context.contentResolver.openOutputStream(uri, "wt")
-                                    if (outputStream != null) {
-                                        document.save(outputStream)
-                                        outputStream.close()
-                                    }
-
-                                    // --- NEW: Save a Backup Copy to Public Storage ---
-                                    try {
-                                        val fileName = "Edited_${uri.lastPathSegment ?: "Document"}_${System.currentTimeMillis()}.pdf"
-                                        val values = ContentValues().apply {
-                                            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                                            put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
-                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOCUMENTS + "/PDFFlip_Edits")
-                                            }
-                                        }
-                                        val publicUri = context.contentResolver.insert(MediaStore.Files.getContentUri("external"), values)
-                                        publicUri?.let { pUri ->
-                                            context.contentResolver.openOutputStream(pUri)?.use { pOut ->
-                                                document.save(pOut)
-                                            }
-                                        }
-                                    } catch (e: Exception) { e.printStackTrace() }
-                                    // ------------------------------------------------
-
-                                    document.close()
-                                    inputStream?.close()
-
-                                    val pfd = context.contentResolver.openFileDescriptor(uri, "r")
-                                    pfd?.let { pdfRenderer = PdfRenderer(it) }
-                                    
-                                    withContext(Dispatchers.Main) { 
-                                        pageStrokes.clear()
-                                        redoStrokes.clear()
-                                        isDrawingMode = false
-                                        Toast.makeText(context, "Saved Successfully!", Toast.LENGTH_SHORT).show() 
-                                    }
-                                } catch (e: Exception) {
-                                    e.printStackTrace()
-                                    withContext(Dispatchers.Main) { 
-                                        Toast.makeText(context, "Save Failed: ${e.message}", Toast.LENGTH_LONG).show()
-                                        if (pdfRenderer == null) {
-                                            val pfd = context.contentResolver.openFileDescriptor(uri, "r")
-                                            pfd?.let { pdfRenderer = PdfRenderer(it) }
-                                        }
-                                    }
-                                }
-                            }
+                            saveEditsToPdf()
                         }
 
                         // Cancel / Discard
@@ -453,49 +542,105 @@ fun ReaderScreen(uri: Uri, initialPage: Int = 0, onBack: () -> Unit) {
                         modifier = Modifier.padding(if (isFullScreen) PaddingValues(0.dp) else innerPadding).fillMaxSize(),
                         userScrollEnabled = !isDrawingMode && !isZoomMode && targetScale == 1f
                     ) { pageIndex: Int ->
-                        ReaderPageContent(
-                            pdfRenderer = pdfRenderer,
-                            pageIndex = pageIndex,
-                            isFullScreen = isFullScreen,
-                            isEyeProtectionActive = isEyeProtectionActive,
-                            isDrawingMode = isDrawingMode,
-                            isZoomMode = isZoomMode,
-                            targetScale = targetScale,
-                            targetOffset = targetOffset,
-                            scale = scale,
-                            offset = offset,
-                            pageStrokes = pageStrokes,
-                            redoStrokes = redoStrokes,
-                            onTransform = { zoom: Float, pan: Offset ->
-                                targetScale = (targetScale * zoom).coerceIn(1f, 3.5f)
-                                if (targetScale > 1f) targetOffset += pan else targetOffset = Offset.Zero
+                        // Apply "Natural Paper" transformation if selected
+                        val graphicsModifier = Modifier.graphicsLayer {
+                            if (flipStyleIndex == 1) { // Natural Paper Flip
+                                val pageOffset = (pagerState.currentPage - pageIndex) + pagerState.currentPageOffsetFraction
+                                if (pageOffset < 0) { // Page to the right
+                                    cameraDistance = 12f * density
+                                    rotationY = -15f * pageOffset.coerceIn(-1f, 0f)
+                                }
                             }
-                        )
+                        }
+
+                        Box(modifier = graphicsModifier) {
+                            ReaderPageContent(
+                                pdfRenderer = pdfRenderer,
+                                pageIndex = pageIndex,
+                                isFullScreen = isFullScreen,
+                                isEyeProtectionActive = isEyeProtectionActive,
+                                isDrawingMode = isDrawingMode,
+                                selectedPenColor = selectedPenColor,
+                                isZoomMode = isZoomMode,
+                                targetScale = targetScale,
+                                targetOffset = targetOffset,
+                                scale = scale,
+                                offset = offset,
+                                pageStrokes = pageStrokes,
+                                redoStrokes = redoStrokes,
+                                onTransform = { zoom: Float, pan: Offset ->
+                                    targetScale = (targetScale * zoom).coerceIn(1f, 3.5f)
+                                    if (targetScale > 1f) targetOffset += pan else targetOffset = Offset.Zero
+                                }
+                            )
+                        }
                     }
                 } else {
-                    VerticalPager(
-                        state = pagerState,
-                        modifier = Modifier.padding(if (isFullScreen) PaddingValues(0.dp) else innerPadding).fillMaxSize(),
-                        userScrollEnabled = !isDrawingMode && !isZoomMode && targetScale == 1f
-                    ) { pageIndex: Int ->
-                        ReaderPageContent(
-                            pdfRenderer = pdfRenderer,
-                            pageIndex = pageIndex,
-                            isFullScreen = isFullScreen,
-                            isEyeProtectionActive = isEyeProtectionActive,
-                            isDrawingMode = isDrawingMode,
-                            isZoomMode = isZoomMode,
-                            targetScale = targetScale,
-                            targetOffset = targetOffset,
-                            scale = scale,
-                            offset = offset,
-                            pageStrokes = pageStrokes,
-                            redoStrokes = redoStrokes,
-                            onTransform = { zoom: Float, pan: Offset ->
-                                targetScale = (targetScale * zoom).coerceIn(1f, 3.5f)
-                                if (targetScale > 1f) targetOffset += pan else targetOffset = Offset.Zero
+                    if (scrollStyleIndex == 1) { // Smooth Flow
+                        LazyColumn(
+                            modifier = Modifier
+                                .padding(if (isFullScreen) PaddingValues(0.dp) else innerPadding)
+                                .fillMaxSize()
+                        ) {
+                            items(pageCount) { pageIndex ->
+                                Box(modifier = Modifier
+                                    .fillMaxWidth()
+                                    .fillParentMaxHeight() // Occupy full screen height for each page
+                                ) {
+                                    ReaderPageContent(
+                                        pdfRenderer = pdfRenderer,
+                                        pageIndex = pageIndex,
+                                        isFullScreen = isFullScreen,
+                                        isEyeProtectionActive = isEyeProtectionActive,
+                                        isDrawingMode = isDrawingMode,
+                                        selectedPenColor = selectedPenColor,
+                                        isZoomMode = isZoomMode,
+                                        targetScale = targetScale,
+                                        targetOffset = targetOffset,
+                                        scale = scale,
+                                        offset = offset,
+                                        pageStrokes = pageStrokes,
+                                        redoStrokes = redoStrokes,
+                                        onTransform = { zoom: Float, pan: Offset ->
+                                            targetScale = (targetScale * zoom).coerceIn(1f, 3.5f)
+                                            if (targetScale > 1f) targetOffset += pan else targetOffset = Offset.Zero
+                                        }
+                                    )
+                                }
+                                if (pageIndex < pageCount - 1) {
+                                    HorizontalDivider(
+                                        modifier = Modifier.padding(vertical = 4.dp),
+                                        color = currentTextColor.copy(alpha = 0.05f)
+                                    )
+                                }
                             }
-                        )
+                        }
+                    } else { // Page Snap (Normal Vertical)
+                        VerticalPager(
+                            state = pagerState,
+                            modifier = Modifier.padding(if (isFullScreen) PaddingValues(0.dp) else innerPadding).fillMaxSize(),
+                            userScrollEnabled = !isDrawingMode && !isZoomMode && targetScale == 1f
+                        ) { pageIndex: Int ->
+                            ReaderPageContent(
+                                pdfRenderer = pdfRenderer,
+                                pageIndex = pageIndex,
+                                isFullScreen = isFullScreen,
+                                isEyeProtectionActive = isEyeProtectionActive,
+                                isDrawingMode = isDrawingMode,
+                                selectedPenColor = selectedPenColor,
+                                isZoomMode = isZoomMode,
+                                targetScale = targetScale,
+                                targetOffset = targetOffset,
+                                scale = scale,
+                                offset = offset,
+                                pageStrokes = pageStrokes,
+                                redoStrokes = redoStrokes,
+                                onTransform = { zoom: Float, pan: Offset ->
+                                    targetScale = (targetScale * zoom).coerceIn(1f, 3.5f)
+                                    if (targetScale > 1f) targetOffset += pan else targetOffset = Offset.Zero
+                                }
+                            )
+                        }
                     }
                 }
             } else {
@@ -503,13 +648,142 @@ fun ReaderScreen(uri: Uri, initialPage: Int = 0, onBack: () -> Unit) {
             }
 
             if (isFullScreen) {
-                Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.TopEnd) {
-                    FilledIconButton(onClick = { isFullScreen = false }, colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.Black.copy(alpha = 0.5f))) {
+                Box(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+                    // Top Overlay Bar in Full Screen
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .background(Color.Black.copy(alpha = 0.3f), CircleShape)
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        // Drawing Toggle
+                        ReaderToolIcon(if (isDrawingMode) Icons.Default.EditOff else Icons.Default.Edit, "Draw", Color.White) { 
+                            isDrawingMode = !isDrawingMode 
+                        }
+
+                        if (isDrawingMode) {
+                            // Pen Color Picker
+                            Box(
+                                modifier = Modifier
+                                    .padding(8.dp)
+                                    .size(20.dp)
+                                    .background(selectedPenColor, CircleShape)
+                                    .clickable { showColorPicker = true }
+                            )
+
+                            // Undo
+                            ReaderToolIcon(
+                                icon = Icons.AutoMirrored.Filled.Undo, 
+                                description = "Undo", 
+                                tint = if ((pageStrokes[pagerState.currentPage]?.size ?: 0) > 0) Color.White else Color.White.copy(alpha = 0.3f)
+                            ) {
+                                val currentList = pageStrokes[pagerState.currentPage]
+                                if (!currentList.isNullOrEmpty()) {
+                                    val lastStroke = currentList.removeAt(currentList.size - 1)
+                                    redoStrokes.getOrPut(pagerState.currentPage) { mutableStateListOf<DrawingStroke>() }.add(lastStroke)
+                                }
+                            }
+
+                            // Redo
+                            ReaderToolIcon(
+                                icon = Icons.AutoMirrored.Filled.Redo, 
+                                description = "Redo", 
+                                tint = if ((redoStrokes[pagerState.currentPage]?.size ?: 0) > 0) Color.White else Color.White.copy(alpha = 0.3f)
+                            ) {
+                                val redoList = redoStrokes[pagerState.currentPage]
+                                if (!redoList.isNullOrEmpty()) {
+                                    val lastRedo = redoList.removeAt(redoList.size - 1)
+                                    pageStrokes.getOrPut(pagerState.currentPage) { mutableStateListOf<DrawingStroke>() }.add(lastRedo)
+                                }
+                            }
+
+                            // Save Permanent
+                            ReaderToolIcon(Icons.Default.Check, "Save Permanent", Color.Green) {
+                                saveEditsToPdf()
+                            }
+
+                            // Cancel / Discard
+                            ReaderToolIcon(Icons.Default.Close, "Cancel", Color.Red) {
+                                if (pageStrokes.values.any { it.isNotEmpty() }) {
+                                    showDiscardDialog = true
+                                } else {
+                                    isDrawingMode = false
+                                }
+                            }
+                        }
+                        
+                        // Read Aloud Toggle
+                        ReaderToolIcon(
+                            icon = when (speechState) {
+                                SpeechState.Playing -> Icons.Default.Pause
+                                else -> Icons.AutoMirrored.Filled.VolumeUp
+                            }, 
+                            description = "Read Aloud", 
+                            tint = Color.White
+                        ) {
+                            handleSpeechToggle()
+                        }
+                        
+                        if (speechState != SpeechState.Stopped) {
+                            ReaderToolIcon(Icons.Default.Stop, "Stop Aloud", Color.Red) {
+                                handleSpeechStop()
+                            }
+                        }
+
+                        // Zoom Mode Toggle
+                        ReaderToolIcon(Icons.Default.ZoomIn, "Zoom Mode", if (isZoomMode) Color.Cyan else Color.White) {
+                            isZoomMode = !isZoomMode
+                            if (!isZoomMode) {
+                                targetScale = 1f
+                                targetOffset = Offset.Zero
+                            }
+                        }
+                    }
+
+                    // Exit Full Screen Button (Top Right)
+                    FilledIconButton(
+                        onClick = { isFullScreen = false }, 
+                        modifier = Modifier.align(Alignment.TopEnd),
+                        colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.Black.copy(alpha = 0.5f))
+                    ) {
                         Icon(Icons.Default.FullscreenExit, "Exit", tint = Color.White)
                     }
                 }
             }
         }
+    }
+
+    // --- COLOR PICKER DIALOG ---
+    if (showColorPicker) {
+        val colors = listOf(Color.Red, Color.Blue, Color.Green, Color.Black, Color.Yellow, Color.Magenta)
+        AlertDialog(
+            onDismissRequest = { showColorPicker = false },
+            title = { Text("Select Pen Color") },
+            text = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    colors.forEach { color ->
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .background(color, CircleShape)
+                                .clickable { 
+                                    selectedPenColor = color
+                                    showColorPicker = false
+                                }
+                                .let { if (selectedPenColor == color) it.background(Color.Gray.copy(alpha = 0.3f), CircleShape) else it }
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showColorPicker = false }) { Text("Close") }
+            }
+        )
     }
 
     // --- DISCARD CHANGES DIALOG ---
@@ -612,31 +886,40 @@ fun ReaderScreen(uri: Uri, initialPage: Int = 0, onBack: () -> Unit) {
 }
 
 @Composable
-fun DrawingCanvas(strokes: SnapshotStateList<DrawingStroke>, redoList: SnapshotStateList<DrawingStroke>, modifier: Modifier) {
+fun DrawingCanvas(strokes: SnapshotStateList<DrawingStroke>, redoList: SnapshotStateList<DrawingStroke>, selectedColor: Color, modifier: Modifier) {
     var currentPoints = remember { mutableStateListOf<Offset>() }
+    var canvasSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
 
-    Canvas(modifier = modifier.pointerInput(Unit) {
-        detectDragGestures(
-            onDragStart = { offset -> 
-                currentPoints.add(offset)
-                redoList.clear() // Clear redo stack when new drawing starts
-            },
-            onDrag = { change, _ -> currentPoints.add(change.position) },
-            onDragEnd = { 
-                strokes.add(DrawingStroke(currentPoints.toList()))
-                currentPoints.clear()
-            }
-        )
-    }) {
+    Canvas(modifier = modifier
+        .onSizeChanged { canvasSize = it }
+        .pointerInput(selectedColor) {
+            detectDragGestures(
+                onDragStart = { offset -> 
+                    currentPoints.add(offset)
+                    redoList.clear() // Clear redo stack when new drawing starts
+                },
+                onDrag = { change, _ -> currentPoints.add(change.position) },
+                onDragEnd = { 
+                    if (canvasSize.width > 0 && canvasSize.height > 0) {
+                        // Normalize points to 0f..1f range based on canvas size
+                        val normalized = currentPoints.map { Offset(it.x / canvasSize.width, it.y / canvasSize.height) }
+                        strokes.add(DrawingStroke(normalized, selectedColor))
+                    }
+                    currentPoints.clear()
+                }
+            )
+        }
+    ) {
         // Draw existing strokes
         strokes.forEach { stroke ->
             val path = Path().apply {
                 if (stroke.points.isNotEmpty()) {
-                    moveTo(stroke.points.first().x, stroke.points.first().y)
-                    stroke.points.forEach { lineTo(it.x, it.y) }
+                    val start = stroke.points.first()
+                    moveTo(start.x * size.width, start.y * size.height)
+                    stroke.points.forEach { lineTo(it.x * size.width, it.y * size.height) }
                 }
             }
-            drawPath(path, Color.Red, style = Stroke(5f, cap = StrokeCap.Round))
+            drawPath(path, stroke.color, style = Stroke(5f, cap = StrokeCap.Round))
         }
         
         // Draw current stroke
@@ -645,7 +928,7 @@ fun DrawingCanvas(strokes: SnapshotStateList<DrawingStroke>, redoList: SnapshotS
                 moveTo(currentPoints.first().x, currentPoints.first().y)
                 currentPoints.forEach { lineTo(it.x, it.y) }
             }
-            drawPath(path, Color.Red, style = Stroke(5f, cap = StrokeCap.Round))
+            drawPath(path, selectedColor, style = Stroke(5f, cap = StrokeCap.Round))
         }
     }
 }
@@ -657,6 +940,7 @@ fun ReaderPageContent(
     isFullScreen: Boolean,
     isEyeProtectionActive: Boolean,
     isDrawingMode: Boolean,
+    selectedPenColor: Color,
     isZoomMode: Boolean,
     targetScale: Float,
     targetOffset: Offset,
@@ -688,7 +972,7 @@ fun ReaderPageContent(
     ) {
         PdfPageItem(pdfRenderer, pageIndex, isFullScreen, isEyeProtectionActive)
         if (isDrawingMode) {
-            DrawingCanvas(strokes, redos, Modifier.fillMaxSize())
+            DrawingCanvas(strokes, redos, selectedPenColor, Modifier.fillMaxSize())
         }
     }
 }

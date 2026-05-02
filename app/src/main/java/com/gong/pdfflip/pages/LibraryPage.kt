@@ -10,11 +10,20 @@ package com.gong.pdfflip.pages
  * 4. Recent Activity: Shows progress and resumes reading from the last page.
  */
 
+import android.content.ContentValues
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -37,6 +46,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -56,24 +67,52 @@ import java.util.Date
 import java.util.Locale
 import kotlin.random.Random
 
-// Updated Book class to support categories/tags
+// Updated Book class to support categories/tags and original source location
 data class Book(
     val name: String, 
     val uri: Uri, 
     val lastAccessed: Long = System.currentTimeMillis(),
     val tag: String? = null,
     val currentPage: Int = 0,
-    val totalPages: Int = 0
+    val totalPages: Int = 0,
+    val sourceUri: String? = null // Store original file location as a string
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LibraryScreen(onBookClick: (Uri, Int) -> Unit, onSettingsClick: () -> Unit) {
+fun LibraryScreen(onBookClick: (Book) -> Unit, onSettingsClick: () -> Unit, titleFontSizeIndex: Int = 1) {
     val context = LocalContext.current
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    
+    BackHandler(enabled = drawerState.isOpen) {
+        scope.launch { drawerState.close() }
+    }
+
     val clipboardManager = LocalClipboardManager.current
     
+    // Font size scaling based on index
+    val gridFontSize = when(titleFontSizeIndex) {
+        0 -> 9.sp
+        2 -> 13.sp
+        else -> 11.sp
+    }
+    val listFontSize = when(titleFontSizeIndex) {
+        0 -> 12.sp
+        2 -> 16.sp
+        else -> 14.sp
+    }
+    val gridLineHeight = when(titleFontSizeIndex) {
+        0 -> 11.sp
+        2 -> 15.sp
+        else -> 13.sp
+    }
+    val listLineHeight = when(titleFontSizeIndex) {
+        0 -> 14.sp
+        2 -> 18.sp
+        else -> 16.sp
+    }
+
     var isGridView by remember { mutableStateOf(true) }
     var searchQuery by remember { mutableStateOf("") }
 
@@ -91,79 +130,106 @@ fun LibraryScreen(onBookClick: (Uri, Int) -> Unit, onSettingsClick: () -> Unit) 
     val libraryBooks = remember { mutableStateListOf<Book>() }
     val recentBooks = remember { mutableStateListOf<Book>() }
 
-    // Save/Load metadata (tags)
+    // Save/Load metadata (tags and source URIs)
     fun saveLibraryMetadata() {
         scope.launch(Dispatchers.IO) {
             val metadataFile = File(context.filesDir, "library_tags.txt")
             val tagsFile = File(context.filesDir, "available_tags.txt")
             
-            metadataFile.writeText(libraryBooks.joinToString("\n") { "${it.name}|${it.tag ?: ""}" })
+            metadataFile.writeText(libraryBooks.joinToString("\n") { "${it.name}|${it.tag ?: ""}|${it.sourceUri ?: ""}" })
             tagsFile.writeText(availableTags.joinToString("\n"))
         }
     }
 
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
-            val filesDir = context.filesDir
-            val allFiles = filesDir.listFiles { file -> file.extension.lowercase() == "pdf" } ?: emptyArray()
+            val loadedBooks = mutableListOf<Book>()
             
-            // Load tags mapping
+            // 1. Load from MediaStore (Documents/PDF Flip folder)
+            val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
+            } else {
+                MediaStore.Files.getContentUri("external")
+            }
+            
+            val projection = arrayOf(
+                MediaStore.Files.FileColumns._ID,
+                MediaStore.Files.FileColumns.DISPLAY_NAME,
+                MediaStore.Files.FileColumns.RELATIVE_PATH
+            )
+            
+            val selection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                "${MediaStore.Files.FileColumns.RELATIVE_PATH} LIKE ? AND ${MediaStore.Files.FileColumns.MIME_TYPE} = ?"
+            } else {
+                "${MediaStore.Files.FileColumns.DATA} LIKE ? AND ${MediaStore.Files.FileColumns.MIME_TYPE} = ?"
+            }
+            
+            val selectionArgs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                arrayOf("%Documents/PDF Flip%", "application/pdf")
+            } else {
+                arrayOf("%/PDF Flip/%", "application/pdf")
+            }
+
+            context.contentResolver.query(collection, projection, selection, selectionArgs, null)?.use { cursor ->
+                val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
+                val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME)
+                
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(idColumn)
+                    val name = cursor.getString(nameColumn)
+                    val contentUri = Uri.withAppendedPath(collection, id.toString())
+                    loadedBooks.add(Book(name, contentUri, sourceUri = contentUri.toString()))
+                }
+            }
+
+            // Load tags and progress mapping
             val tagMap = mutableMapOf<String, String>()
+            val progressMap = mutableMapOf<String, Pair<Int, Int>>()
+            
             val metadataFile = File(context.filesDir, "library_tags.txt")
             if (metadataFile.exists()) {
                 metadataFile.readLines().forEach { line ->
                     val parts = line.split("|")
-                    if (parts.size >= 2 && parts[1].isNotBlank()) tagMap[parts[0]] = parts[1]
+                    if (parts.size >= 2) tagMap[parts[0]] = parts[1]
                 }
             }
 
-            // Load available tags list
-            val tagsFile = File(context.filesDir, "available_tags.txt")
-            val loadedTags = if (tagsFile.exists()) tagsFile.readLines().filter { it.isNotBlank() } else emptyList()
-
-            // Load progress and recent data
-            val progressMap = mutableMapOf<String, Pair<Int, Int>>()
             val recentFile = File(context.filesDir, "recent_data.txt")
-            val loadedRecent = mutableListOf<Book>()
-            
             if (recentFile.exists()) {
                 recentFile.readLines().forEach { line ->
                     val parts = line.split("|")
-                    if (parts.size >= 2) {
+                    if (parts.size >= 4) {
                         val name = parts[0]
-                        val time = parts[1].toLongOrNull() ?: System.currentTimeMillis()
-                        val page = if (parts.size >= 3) parts[2].toIntOrNull() ?: 0 else 0
-                        val total = if (parts.size >= 4) parts[3].toIntOrNull() ?: 0 else 0
-                        
+                        val page = parts[2].toIntOrNull() ?: 0
+                        val total = parts[3].toIntOrNull() ?: 0
                         progressMap[name] = page to total
-                        
-                        val file = File(context.filesDir, name)
-                        if (file.exists()) {
-                            loadedRecent.add(Book(file.name, Uri.fromFile(file), time, tag = tagMap[file.name], currentPage = page, totalPages = total))
-                        }
                     }
                 }
-                loadedRecent.sortByDescending { it.lastAccessed }
             }
 
-            val loadedLibrary = allFiles.map { file ->
-                val progress = progressMap[file.name]
-                Book(
-                    name = file.name, 
-                    uri = Uri.fromFile(file), 
-                    tag = tagMap[file.name],
+            // Update loaded books with metadata
+            val finalBooks = loadedBooks.map { book ->
+                val progress = progressMap[book.name]
+                book.copy(
+                    tag = tagMap[book.name],
                     currentPage = progress?.first ?: 0,
                     totalPages = progress?.second ?: 0
                 )
             }
             
+            // Load available tags list
+            val tagsFile = File(context.filesDir, "available_tags.txt")
+            val loadedTags = if (tagsFile.exists()) tagsFile.readLines().filter { it.isNotBlank() } else emptyList()
+
             withContext(Dispatchers.Main) {
                 libraryBooks.clear()
-                libraryBooks.addAll(loadedLibrary)
-                recentBooks.clear()
-                recentBooks.addAll(loadedRecent)
+                libraryBooks.addAll(finalBooks)
                 availableTags.clear()
                 availableTags.addAll(loadedTags)
+                
+                // Refresh recent list based on time
+                recentBooks.clear()
+                recentBooks.addAll(finalBooks.sortedByDescending { it.lastAccessed }.take(10))
             }
         }
     }
@@ -184,15 +250,23 @@ fun LibraryScreen(onBookClick: (Uri, Int) -> Unit, onSettingsClick: () -> Unit) 
 
     fun deleteBook(book: Book) {
         scope.launch(Dispatchers.IO) {
-            val file = File(context.filesDir, book.name)
-            if (file.exists()) file.delete()
-            withContext(Dispatchers.Main) {
-                libraryBooks.remove(book)
-                recentBooks.removeAll { it.name == book.name }
-                saveLibraryMetadata()
-                Toast.makeText(context, "${book.name.substringBeforeLast(".")} deleted", Toast.LENGTH_SHORT).show()
-                bookToDelete = null
-                userInputCode = ""
+            try {
+                // Delete from public storage (PDF Flip folder)
+                context.contentResolver.delete(book.uri, null, null)
+                
+                withContext(Dispatchers.Main) {
+                    libraryBooks.remove(book)
+                    recentBooks.removeAll { it.name == book.name }
+                    saveLibraryMetadata()
+                    Toast.makeText(context, "${book.name.substringBeforeLast(".")} deleted from storage", Toast.LENGTH_SHORT).show()
+                    bookToDelete = null
+                    userInputCode = ""
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "Delete failed: ${e.message}", Toast.LENGTH_LONG).show()
+                }
             }
         }
     }
@@ -205,21 +279,97 @@ fun LibraryScreen(onBookClick: (Uri, Int) -> Unit, onSettingsClick: () -> Unit) 
     }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument(),
-        onResult = { uri: Uri? -> 
-            uri?.let { sourceUri ->
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+        onResult = { uris: List<Uri> -> 
+            if (uris.isNotEmpty()) {
                 scope.launch {
-                    try {
-                        val fileName = getFileName(context, sourceUri) ?: "Document_${System.currentTimeMillis()}.pdf"
-                        val destinationFile = File(context.filesDir, fileName)
-                        context.contentResolver.openInputStream(sourceUri)?.use { input ->
-                            FileOutputStream(destinationFile).use { output -> input.copyTo(output) }
+                    var importCount = 0
+                    var lastImportedUri: Uri? = null
+                    var lastImportedName: String? = null
+
+                    uris.forEach { sourceUri ->
+                        try {
+                            val fileName = getFileName(context, sourceUri) ?: "Document_${System.currentTimeMillis()}.pdf"
+                            
+                            // 1. FAST CHECK: Is it already on our UI list?
+                            if (libraryBooks.any { it.name == fileName }) {
+                                return@forEach
+                            }
+
+                            // 2. INTELLIGENT DISK CHECK: Does the file exist in the "PDF Flip" folder on storage?
+                            val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
+                            } else {
+                                MediaStore.Files.getContentUri("external")
+                            }
+                            
+                            val projection = arrayOf(MediaStore.Files.FileColumns.DISPLAY_NAME)
+                            val selection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                "${MediaStore.Files.FileColumns.DISPLAY_NAME} = ? AND ${MediaStore.Files.FileColumns.RELATIVE_PATH} LIKE ?"
+                            } else {
+                                "${MediaStore.Files.FileColumns.DISPLAY_NAME} = ? AND ${MediaStore.Files.FileColumns.DATA} LIKE ?"
+                            }
+                            val selectionArgs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                arrayOf(fileName, "%Documents/PDF Flip%")
+                            } else {
+                                arrayOf(fileName, "%/PDF Flip/%")
+                            }
+
+                            val existsOnDisk = context.contentResolver.query(collection, projection, selection, selectionArgs, null)?.use { 
+                                it.count > 0 
+                            } ?: false
+
+                            if (existsOnDisk) {
+                                return@forEach // Skip if physical file already exists to avoid (1).pdf mess
+                            }
+
+                            // 3. SAFE IMPORT: Only create the file if it's truly new
+                            val values = ContentValues().apply {
+                                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                                put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOCUMENTS + "/PDF Flip")
+                                }
+                            }
+                            
+                            val destinationUri = context.contentResolver.insert(collection, values)
+                            
+                            destinationUri?.let { destUri ->
+                                context.contentResolver.openInputStream(sourceUri)?.use { input ->
+                                    context.contentResolver.openOutputStream(destUri)?.use { output ->
+                                        input.copyTo(output)
+                                    }
+                                }
+                                
+                                val newBook = Book(
+                                    name = fileName, 
+                                    uri = destUri,
+                                    sourceUri = destUri.toString()
+                                )
+                                
+                                withContext(Dispatchers.Main) {
+                                    libraryBooks.add(newBook)
+                                    updateRecent(newBook, 0, 0)
+                                }
+                                
+                                lastImportedUri = destUri
+                                lastImportedName = fileName
+                                importCount++
+                            }
+                        } catch (e: Exception) { 
+                            e.printStackTrace()
                         }
-                        val newBook = Book(fileName, Uri.fromFile(destinationFile))
-                        if (libraryBooks.none { it.name == fileName }) libraryBooks.add(newBook)
-                        updateRecent(newBook, 0, 0)
-                        onBookClick(newBook.uri, 0)
-                    } catch (e: Exception) { e.printStackTrace() }
+                    }
+
+                    withContext(Dispatchers.Main) {
+                        if (importCount > 1) {
+                            Toast.makeText(context, "Imported $importCount files", Toast.LENGTH_SHORT).show()
+                        } else if (importCount == 1 && lastImportedUri != null) {
+                            val newBook = libraryBooks.find { it.name == lastImportedName }
+                            if (newBook != null) onBookClick(newBook)
+                        }
+                        saveLibraryMetadata()
+                    }
                 }
             }
         }
@@ -391,7 +541,7 @@ fun LibraryScreen(onBookClick: (Uri, Int) -> Unit, onSettingsClick: () -> Unit) 
                                     .clickable {
                                         updateRecent(book, book.currentPage, book.totalPages)
                                         scope.launch { drawerState.close() }
-                                        onBookClick(book.uri, book.currentPage)
+                                        onBookClick(book)
                                     }
                                     .padding(horizontal = 16.dp, vertical = 2.dp),
                                 verticalArrangement = Arrangement.Center
@@ -607,16 +757,18 @@ fun LibraryScreen(onBookClick: (Uri, Int) -> Unit, onSettingsClick: () -> Unit) 
                 } else {
                     if (isGridView) {
                         LazyVerticalGrid(
-                            columns = GridCells.Fixed(3),
-                            contentPadding = PaddingValues(16.dp),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                            columns = GridCells.Fixed(4), // Increased from 3 to 4 for smaller cards
+                            contentPadding = PaddingValues(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             items(filteredBooks) { book ->
                                 BookGridItem(book, 
+                                    fontSize = gridFontSize,
+                                    lineHeight = gridLineHeight,
                                     onClick = { 
                                         updateRecent(book, book.currentPage, book.totalPages)
-                                        onBookClick(book.uri, book.currentPage) 
+                                        onBookClick(book) 
                                     },
                                     onDelete = {
                                         bookToDelete = book
@@ -633,9 +785,11 @@ fun LibraryScreen(onBookClick: (Uri, Int) -> Unit, onSettingsClick: () -> Unit) 
                         ) {
                             items(filteredBooks) { book ->
                                 BookListItem(book, 
+                                    fontSize = listFontSize,
+                                    lineHeight = listLineHeight,
                                     onClick = { 
                                         updateRecent(book, book.currentPage, book.totalPages)
-                                        onBookClick(book.uri, book.currentPage)
+                                        onBookClick(book)
                                     },
                                     onDelete = {
                                         bookToDelete = book
@@ -653,100 +807,212 @@ fun LibraryScreen(onBookClick: (Uri, Int) -> Unit, onSettingsClick: () -> Unit) 
 }
 
 @Composable
-fun BookGridItem(book: Book, onClick: () -> Unit, onDelete: () -> Unit, onTagClick: () -> Unit) {
+fun BookCover(uri: Uri, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var bitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var isLoading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(uri) {
+        withContext(Dispatchers.IO) {
+            try {
+                val pfd = context.contentResolver.openFileDescriptor(uri, "r")
+                if (pfd != null) {
+                    val renderer = PdfRenderer(pfd)
+                    if (renderer.pageCount > 0) {
+                        val page = renderer.openPage(0)
+                        // Create a small thumbnail for efficiency
+                        val b = Bitmap.createBitmap(page.width / 4, page.height / 4, Bitmap.Config.ARGB_8888)
+                        page.render(b, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        bitmap = b
+                        page.close()
+                    }
+                    renderer.close()
+                    pfd.close()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                isLoading = false
+            }
+        }
+    }
+
+    Box(modifier = modifier.background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.05f))) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap!!.asImageBitmap(),
+                contentDescription = "Cover",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+        } else if (!isLoading) {
+            Icon(
+                Icons.Default.PictureAsPdf,
+                contentDescription = null,
+                modifier = Modifier.size(24.dp).align(Alignment.Center),
+                tint = Color.Red.copy(alpha = 0.3f)
+            )
+        }
+    }
+}
+
+@Composable
+fun BookGridItem(book: Book, fontSize: androidx.compose.ui.unit.TextUnit, lineHeight: androidx.compose.ui.unit.TextUnit, onClick: () -> Unit, onDelete: () -> Unit, onTagClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .aspectRatio(0.7f)
+            .aspectRatio(0.7f) // Adjusted for more vertical space for cover + title
             .clickable { onClick() },
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            // Actions (Top)
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Cover Image (Top Part)
+                BookCover(
+                    uri = book.uri,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp))
+                )
+
+                // Title Area (Bottom Part)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = book.name.substringBeforeLast("."),
+                        fontSize = fontSize,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
+                        lineHeight = lineHeight
+                    )
+                    Spacer(Modifier.height(12.dp)) // Space for progress pinned below
+                }
+            }
+
+            // Actions (Top Right/Left Overlays)
             Row(
-                modifier = Modifier.fillMaxWidth().padding(4.dp),
+                modifier = Modifier.fillMaxWidth().padding(2.dp),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                IconButton(onClick = onTagClick, modifier = Modifier.size(24.dp)) {
+                IconButton(
+                    onClick = onTagClick, 
+                    modifier = Modifier
+                        .size(20.dp)
+                        .background(Color.Black.copy(alpha = 0.2f), CircleShape)
+                ) {
                     val tagColor = getTagColor(book.tag)
                     Icon(
                         Icons.Default.Label,
                         contentDescription = "Tag", 
-                        tint = if (book.tag != null) tagColor else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                        modifier = Modifier.size(16.dp)
+                        tint = if (book.tag != null) tagColor else Color.White.copy(alpha = 0.6f),
+                        modifier = Modifier.size(12.dp)
                     )
                 }
-                IconButton(onClick = onDelete, modifier = Modifier.size(24.dp)) {
-                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red.copy(alpha = 0.4f), modifier = Modifier.size(16.dp))
+                IconButton(
+                    onClick = onDelete, 
+                    modifier = Modifier
+                        .size(20.dp)
+                        .background(Color.Black.copy(alpha = 0.2f), CircleShape)
+                ) {
+                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.size(12.dp))
                 }
             }
-            
-            Column(
-                modifier = Modifier.fillMaxSize().padding(8.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                Icon(
-                    Icons.Default.PictureAsPdf, 
-                    contentDescription = null, 
-                    modifier = Modifier.size(32.dp),
-                    tint = Color.Red.copy(alpha = 0.6f)
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = book.name.substringBeforeLast("."),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center
-                )
+
+            // Progress Indicator (Pinned to Bottom)
+            if (book.totalPages > 0) {
+                val progress = (book.currentPage + 1).toFloat() / book.totalPages
+                val percent = (progress * 100).toInt()
+                
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(2.dp)
+                            .clip(CircleShape),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.1f)
+                    )
+                    Text(
+                        text = "$percent%",
+                        fontSize = 7.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-fun BookListItem(book: Book, onClick: () -> Unit, onDelete: () -> Unit, onTagClick: () -> Unit) {
+fun BookListItem(book: Book, fontSize: androidx.compose.ui.unit.TextUnit, lineHeight: androidx.compose.ui.unit.TextUnit, onClick: () -> Unit, onDelete: () -> Unit, onTagClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .height(60.dp)
+            .height(60.dp) // Slightly taller to fit thumbnail
             .clickable { onClick() },
-        shape = RoundedCornerShape(8.dp),
+        shape = RoundedCornerShape(6.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Row(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                Icons.Default.PictureAsPdf, 
-                contentDescription = null, 
-                modifier = Modifier.size(32.dp),
-                tint = Color.Red.copy(alpha = 0.6f)
+            // Small Thumbnail
+            BookCover(
+                uri = book.uri,
+                modifier = Modifier
+                    .size(45.dp)
+                    .clip(RoundedCornerShape(4.dp))
             )
-            Spacer(Modifier.width(16.dp))
+            
+            Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = book.name.substringBeforeLast("."),
-                    fontSize = 14.sp,
+                    fontSize = fontSize,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    lineHeight = lineHeight
                 )
+                
+                // Progress Label
+                if (book.totalPages > 0) {
+                    val percent = ((book.currentPage + 1).toFloat() / book.totalPages * 100).toInt()
+                    Text(
+                        text = "Page ${book.currentPage + 1}/${book.totalPages} ($percent%)",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                    )
+                }
             }
-            IconButton(onClick = onTagClick) {
+            IconButton(onClick = onTagClick, modifier = Modifier.size(32.dp)) {
                 val tagColor = getTagColor(book.tag)
-                Icon(Icons.Default.Label, contentDescription = "Tag", tint = if (book.tag != null) tagColor else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+                Icon(Icons.Default.Label, contentDescription = "Tag", tint = if (book.tag != null) tagColor else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f), modifier = Modifier.size(16.dp))
             }
-            IconButton(onClick = onDelete) {
-                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red.copy(alpha = 0.6f))
+            IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red.copy(alpha = 0.6f), modifier = Modifier.size(16.dp))
             }
         }
     }
