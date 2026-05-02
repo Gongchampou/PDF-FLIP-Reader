@@ -1,5 +1,15 @@
 package com.gong.pdfflip.pages
 
+/**
+ * LIBRARY PAGE - The "Bookshelf"
+ * This page allows users to manage their PDF collection.
+ * Key Features:
+ * 1. PDF Import: Add new PDF files from the device.
+ * 2. Organization: Categorize books with colorful tags.
+ * 3. Search & Filter: Quickly find books by name or category.
+ * 4. Recent Activity: Shows progress and resumes reading from the last page.
+ */
+
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.widget.Toast
@@ -35,6 +45,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.gong.pdfflip.ui.theme.getTagColor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -50,12 +61,14 @@ data class Book(
     val name: String, 
     val uri: Uri, 
     val lastAccessed: Long = System.currentTimeMillis(),
-    val tag: String? = null
+    val tag: String? = null,
+    val currentPage: Int = 0,
+    val totalPages: Int = 0
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LibraryScreen(onBookClick: (Uri) -> Unit, onSettingsClick: () -> Unit) {
+fun LibraryScreen(onBookClick: (Uri, Int) -> Unit, onSettingsClick: () -> Unit) {
     val context = LocalContext.current
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -108,23 +121,40 @@ fun LibraryScreen(onBookClick: (Uri) -> Unit, onSettingsClick: () -> Unit) {
             val tagsFile = File(context.filesDir, "available_tags.txt")
             val loadedTags = if (tagsFile.exists()) tagsFile.readLines().filter { it.isNotBlank() } else emptyList()
 
-            val loadedLibrary = allFiles.map { Book(it.name, Uri.fromFile(it), tag = tagMap[it.name]) }
-            
+            // Load progress and recent data
+            val progressMap = mutableMapOf<String, Pair<Int, Int>>()
             val recentFile = File(context.filesDir, "recent_data.txt")
             val loadedRecent = mutableListOf<Book>()
+            
             if (recentFile.exists()) {
                 recentFile.readLines().forEach { line ->
                     val parts = line.split("|")
-                    if (parts.size == 2) {
+                    if (parts.size >= 2) {
                         val name = parts[0]
                         val time = parts[1].toLongOrNull() ?: System.currentTimeMillis()
+                        val page = if (parts.size >= 3) parts[2].toIntOrNull() ?: 0 else 0
+                        val total = if (parts.size >= 4) parts[3].toIntOrNull() ?: 0 else 0
+                        
+                        progressMap[name] = page to total
+                        
                         val file = File(context.filesDir, name)
                         if (file.exists()) {
-                            loadedRecent.add(Book(file.name, Uri.fromFile(file), time, tag = tagMap[file.name]))
+                            loadedRecent.add(Book(file.name, Uri.fromFile(file), time, tag = tagMap[file.name], currentPage = page, totalPages = total))
                         }
                     }
                 }
                 loadedRecent.sortByDescending { it.lastAccessed }
+            }
+
+            val loadedLibrary = allFiles.map { file ->
+                val progress = progressMap[file.name]
+                Book(
+                    name = file.name, 
+                    uri = Uri.fromFile(file), 
+                    tag = tagMap[file.name],
+                    currentPage = progress?.first ?: 0,
+                    totalPages = progress?.second ?: 0
+                )
             }
             
             withContext(Dispatchers.Main) {
@@ -138,9 +168,9 @@ fun LibraryScreen(onBookClick: (Uri) -> Unit, onSettingsClick: () -> Unit) {
         }
     }
 
-    fun updateRecent(book: Book) {
+    fun updateRecent(book: Book, page: Int = 0, total: Int = 0) {
         val currentTime = System.currentTimeMillis()
-        val updatedBook = book.copy(lastAccessed = currentTime)
+        val updatedBook = book.copy(lastAccessed = currentTime, currentPage = page, totalPages = if (total > 0) total else book.totalPages)
         recentBooks.removeAll { it.name == book.name }
         recentBooks.add(0, updatedBook)
         if (recentBooks.size > 10) recentBooks.removeRange(10, recentBooks.size)
@@ -148,7 +178,7 @@ fun LibraryScreen(onBookClick: (Uri) -> Unit, onSettingsClick: () -> Unit) {
         val dataToSave = recentBooks.toList()
         scope.launch(Dispatchers.IO) {
             val recentFile = File(context.filesDir, "recent_data.txt")
-            recentFile.writeText(dataToSave.joinToString("\n") { "${it.name}|${it.lastAccessed}" })
+            recentFile.writeText(dataToSave.joinToString("\n") { "${it.name}|${it.lastAccessed}|${it.currentPage}|${it.totalPages}" })
         }
     }
 
@@ -187,8 +217,8 @@ fun LibraryScreen(onBookClick: (Uri) -> Unit, onSettingsClick: () -> Unit) {
                         }
                         val newBook = Book(fileName, Uri.fromFile(destinationFile))
                         if (libraryBooks.none { it.name == fileName }) libraryBooks.add(newBook)
-                        updateRecent(newBook)
-                        onBookClick(newBook.uri)
+                        updateRecent(newBook, 0, 0)
+                        onBookClick(newBook.uri, 0)
                     } catch (e: Exception) { e.printStackTrace() }
                 }
             }
@@ -279,7 +309,7 @@ fun LibraryScreen(onBookClick: (Uri) -> Unit, onSettingsClick: () -> Unit) {
             title = { Text("Confirm Delete", fontWeight = FontWeight.Bold) },
             text = {
                 Column {
-                    Text("Are you sure you want to delete \"${bookToDelete!!.name.substringBeforeLast(".")}\"? This action cannot be undone.")
+                    Text("\"${bookToDelete!!.name.substringBeforeLast(".")}\"? This action cannot be undone.")
                     Spacer(Modifier.height(16.dp))
                     Text("To confirm, please type the code below:", fontSize = 12.sp, color = Color.Gray)
                     
@@ -359,9 +389,9 @@ fun LibraryScreen(onBookClick: (Uri) -> Unit, onSettingsClick: () -> Unit) {
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
-                                        updateRecent(book)
+                                        updateRecent(book, book.currentPage, book.totalPages)
                                         scope.launch { drawerState.close() }
-                                        onBookClick(book.uri)
+                                        onBookClick(book.uri, book.currentPage)
                                     }
                                     .padding(horizontal = 16.dp, vertical = 2.dp),
                                 verticalArrangement = Arrangement.Center
@@ -375,13 +405,29 @@ fun LibraryScreen(onBookClick: (Uri) -> Unit, onSettingsClick: () -> Unit) {
                                     fontSize = 14.sp,
                                     lineHeight = 16.sp
                                 )
-                                val dateStr = SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(book.lastAccessed))
-                                Text(
-                                    text = dateStr,
-                                    fontSize = 10.sp,
-                                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
-                                    lineHeight = 10.sp
-                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    val dateStr = SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(book.lastAccessed))
+                                    Text(
+                                        text = dateStr,
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f),
+                                        lineHeight = 10.sp
+                                    )
+
+                                    if (book.totalPages > 0) {
+                                        val percent = ((book.currentPage + 1).toFloat() / book.totalPages * 100).toInt()
+                                        Text(
+                                            text = "Page ${book.currentPage + 1}/${book.totalPages} ($percent%)",
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
+                                            lineHeight = 10.sp
+                                        )
+                                    }
+                                }
                             }
                             HorizontalDivider(
                                 modifier = Modifier.padding(horizontal = 16.dp),
@@ -507,13 +553,20 @@ fun LibraryScreen(onBookClick: (Uri) -> Unit, onSettingsClick: () -> Unit) {
                             )
                         }
                         items(availableTags) { tag ->
+                            val tagColor = getTagColor(tag)
                             FilterChip(
                                 selected = selectedFilterTag == tag,
                                 onClick = { selectedFilterTag = if (selectedFilterTag == tag) null else tag },
                                 label = { Text(tag) },
                                 colors = FilterChipDefaults.filterChipColors(
-                                    selectedLabelColor = MaterialTheme.colorScheme.onBackground,
-                                    labelColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                                    selectedLabelColor = Color.White,
+                                    selectedContainerColor = tagColor,
+                                    labelColor = tagColor.copy(alpha = 0.8f)
+                                ),
+                                border = FilterChipDefaults.filterChipBorder(
+                                    enabled = true,
+                                    selected = selectedFilterTag == tag,
+                                    borderColor = tagColor.copy(alpha = 0.5f)
                                 )
                             )
                         }
@@ -562,8 +615,8 @@ fun LibraryScreen(onBookClick: (Uri) -> Unit, onSettingsClick: () -> Unit) {
                             items(filteredBooks) { book ->
                                 BookGridItem(book, 
                                     onClick = { 
-                                        updateRecent(book)
-                                        onBookClick(book.uri) 
+                                        updateRecent(book, book.currentPage, book.totalPages)
+                                        onBookClick(book.uri, book.currentPage) 
                                     },
                                     onDelete = {
                                         bookToDelete = book
@@ -581,8 +634,8 @@ fun LibraryScreen(onBookClick: (Uri) -> Unit, onSettingsClick: () -> Unit) {
                             items(filteredBooks) { book ->
                                 BookListItem(book, 
                                     onClick = { 
-                                        updateRecent(book)
-                                        onBookClick(book.uri) 
+                                        updateRecent(book, book.currentPage, book.totalPages)
+                                        onBookClick(book.uri, book.currentPage)
                                     },
                                     onDelete = {
                                         bookToDelete = book
@@ -617,10 +670,11 @@ fun BookGridItem(book: Book, onClick: () -> Unit, onDelete: () -> Unit, onTagCli
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 IconButton(onClick = onTagClick, modifier = Modifier.size(24.dp)) {
+                    val tagColor = getTagColor(book.tag)
                     Icon(
                         Icons.Default.Label,
                         contentDescription = "Tag", 
-                        tint = if (book.tag != null) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                        tint = if (book.tag != null) tagColor else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
                         modifier = Modifier.size(16.dp)
                     )
                 }
@@ -688,7 +742,8 @@ fun BookListItem(book: Book, onClick: () -> Unit, onDelete: () -> Unit, onTagCli
                 )
             }
             IconButton(onClick = onTagClick) {
-                Icon(Icons.Default.Label, contentDescription = "Tag", tint = if (book.tag != null) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+                val tagColor = getTagColor(book.tag)
+                Icon(Icons.Default.Label, contentDescription = "Tag", tint = if (book.tag != null) tagColor else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
             }
             IconButton(onClick = onDelete) {
                 Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red.copy(alpha = 0.6f))

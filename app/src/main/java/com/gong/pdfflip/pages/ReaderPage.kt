@@ -1,10 +1,25 @@
 package com.gong.pdfflip.pages
 
+/**
+ * READER PAGE - The "Reading Room"
+ * This is the core viewing experience of the app.
+ * Key Features:
+ * 1. PDF Rendering: Uses Android's PdfRenderer for high-performance viewing.
+ * 2. Flex Zoom: Bouncy, elastic zoom and pan with a dedicated toggle.
+ * 3. Eye Protection: Multi-mode backgrounds (like Sepia) and content filtering.
+ * 4. Drawing & Annotations: Sketch directly on PDF pages with undo/redo/save.
+ * 5. Text-to-Speech: "Read Aloud" function with intelligent text cleaning.
+ */
+
+import android.content.ContentValues
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.widget.Toast
@@ -22,15 +37,19 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -47,6 +66,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
@@ -61,9 +82,14 @@ import java.util.Locale
 // Data class to store our strokes for saving
 data class DrawingStroke(val points: List<Offset>)
 
+enum class PageMode {
+    HorizontalFlip,
+    VerticalScroll
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ReaderScreen(uri: Uri, onBack: () -> Unit) {
+fun ReaderScreen(uri: Uri, initialPage: Int = 0, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -80,6 +106,7 @@ fun ReaderScreen(uri: Uri, onBack: () -> Unit) {
     var isDrawingMode by remember { mutableStateOf(false) }
     var isSpeaking by remember { mutableStateOf(false) }
     var showDiscardDialog by remember { mutableStateOf(false) }
+    var pageMode by remember { mutableStateOf(PageMode.HorizontalFlip) }
     
     // Zoom States (Flexible/Spring Animated)
     var isZoomMode by remember { mutableStateOf(false) }
@@ -98,9 +125,11 @@ fun ReaderScreen(uri: Uri, onBack: () -> Unit) {
     )
     
     // Drawing State: Page Index -> List of Strokes
-    val pageStrokes = remember { mutableStateMapOf<Int, SnapshotStateList<DrawingStroke>>() }
+    val pageStrokes: SnapshotStateMap<Int, SnapshotStateList<DrawingStroke>> = remember { mutableStateMapOf() }
     // Redo State: Page Index -> List of Redo Strokes
-    val redoStrokes = remember { mutableStateMapOf<Int, SnapshotStateList<DrawingStroke>>() }
+    val redoStrokes: SnapshotStateMap<Int, SnapshotStateList<DrawingStroke>> = remember { mutableStateMapOf() }
+
+    val pagerState = rememberPagerState(initialPage = initialPage.coerceIn(0, if (pageCount > 0) pageCount - 1 else 0), pageCount = { pageCount })
 
     // TTS Engine
     var tts by remember { mutableStateOf<TextToSpeech?>(null) }
@@ -134,12 +163,40 @@ fun ReaderScreen(uri: Uri, onBack: () -> Unit) {
                     val renderer = PdfRenderer(it)
                     pdfRenderer = renderer
                     pageCount = renderer.pageCount
+                    
+                    // Jump to initial page after loading
+                    if (initialPage > 0 && initialPage < renderer.pageCount) {
+                        withContext(Dispatchers.Main) {
+                            pagerState.scrollToPage(initialPage)
+                        }
+                    }
                 }
             } catch (e: Exception) { e.printStackTrace() }
         }
     }
 
-    val pagerState = rememberPagerState(pageCount = { pageCount })
+    // Save current page to local storage (No Sync - Pure Local Memory)
+    LaunchedEffect(pagerState.currentPage) {
+        if (pageCount > 0) {
+            val fileName = uri.lastPathSegment ?: return@LaunchedEffect
+            scope.launch(Dispatchers.IO) {
+                val recentFile = java.io.File(context.filesDir, "recent_data.txt")
+                val lines = if (recentFile.exists()) recentFile.readLines().toMutableList() else mutableListOf()
+                
+                val timestamp = System.currentTimeMillis()
+                val existingIndex = lines.indexOfFirst { it.startsWith("$fileName|") }
+                val newLine = "$fileName|$timestamp|${pagerState.currentPage}|$pageCount"
+                
+                if (existingIndex != -1) {
+                    lines.removeAt(existingIndex)
+                }
+                lines.add(0, newLine)
+                
+                // Keep only top 10
+                recentFile.writeText(lines.take(10).joinToString("\n"))
+            }
+        }
+    }
 
     // Use Theme Colors by default, but allow Eye Protection (Sepia) override
     val themeBg = MaterialTheme.colorScheme.background
@@ -170,6 +227,14 @@ fun ReaderScreen(uri: Uri, onBack: () -> Unit) {
                         ReaderToolIcon(Icons.AutoMirrored.Filled.List, "Contents", currentTextColor) { showContents = true }
                         ReaderToolIcon(Icons.Default.Search, "Search", currentTextColor) { showSearch = true }
                         
+                        ReaderToolIcon(
+                            icon = if (pageMode == PageMode.HorizontalFlip) Icons.Default.SwapVert else Icons.Default.SwapHoriz, 
+                            description = "Switch Page Mode", 
+                            tint = currentTextColor
+                        ) { 
+                            pageMode = if (pageMode == PageMode.HorizontalFlip) PageMode.VerticalScroll else PageMode.HorizontalFlip 
+                        }
+
                         ReaderToolIcon(Icons.Default.Fullscreen, "Full Screen", currentTextColor) { isFullScreen = true }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = currentBgColor)
@@ -244,7 +309,7 @@ fun ReaderScreen(uri: Uri, onBack: () -> Unit) {
                             val currentList = pageStrokes[pagerState.currentPage]
                             if (!currentList.isNullOrEmpty()) {
                                 val lastStroke = currentList.removeAt(currentList.size - 1)
-                                redoStrokes.getOrPut(pagerState.currentPage) { mutableStateListOf() }.add(lastStroke)
+                                redoStrokes.getOrPut(pagerState.currentPage) { mutableStateListOf<DrawingStroke>() }.add(lastStroke)
                             }
                         }
 
@@ -257,7 +322,7 @@ fun ReaderScreen(uri: Uri, onBack: () -> Unit) {
                             val redoList = redoStrokes[pagerState.currentPage]
                             if (!redoList.isNullOrEmpty()) {
                                 val lastRedo = redoList.removeAt(redoList.size - 1)
-                                pageStrokes.getOrPut(pagerState.currentPage) { mutableStateListOf() }.add(lastRedo)
+                                pageStrokes.getOrPut(pagerState.currentPage) { mutableStateListOf<DrawingStroke>() }.add(lastRedo)
                             }
                         }
 
@@ -295,6 +360,26 @@ fun ReaderScreen(uri: Uri, onBack: () -> Unit) {
                                         document.save(outputStream)
                                         outputStream.close()
                                     }
+
+                                    // --- NEW: Save a Backup Copy to Public Storage ---
+                                    try {
+                                        val fileName = "Edited_${uri.lastPathSegment ?: "Document"}_${System.currentTimeMillis()}.pdf"
+                                        val values = ContentValues().apply {
+                                            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                                            put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
+                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOCUMENTS + "/PDFFlip_Edits")
+                                            }
+                                        }
+                                        val publicUri = context.contentResolver.insert(MediaStore.Files.getContentUri("external"), values)
+                                        publicUri?.let { pUri ->
+                                            context.contentResolver.openOutputStream(pUri)?.use { pOut ->
+                                                document.save(pOut)
+                                            }
+                                        }
+                                    } catch (e: Exception) { e.printStackTrace() }
+                                    // ------------------------------------------------
+
                                     document.close()
                                     inputStream?.close()
 
@@ -362,40 +447,55 @@ fun ReaderScreen(uri: Uri, onBack: () -> Unit) {
     ) { innerPadding ->
         Box(modifier = Modifier.fillMaxSize()) {
             if (pageCount > 0) {
-                HorizontalPager(
-                    state = pagerState,
-                    modifier = Modifier.padding(if (isFullScreen) PaddingValues(0.dp) else innerPadding).fillMaxSize(),
-                    userScrollEnabled = !isDrawingMode && !isZoomMode && targetScale == 1f
-                ) { pageIndex ->
-                    val strokes = pageStrokes.getOrPut(pageIndex) { mutableStateListOf() }
-                    val redos = redoStrokes.getOrPut(pageIndex) { mutableStateListOf() }
-                    
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .pointerInput(isDrawingMode, isZoomMode, targetScale) {
-                                if (!isDrawingMode && isZoomMode) {
-                                    detectTransformGestures { _, pan, zoom, _ ->
-                                        targetScale = (targetScale * zoom).coerceIn(1f, 3.5f)
-                                        if (targetScale > 1f) {
-                                            targetOffset += pan
-                                        } else {
-                                            targetOffset = Offset.Zero
-                                        }
-                                    }
-                                }
+                if (pageMode == PageMode.HorizontalFlip) {
+                    HorizontalPager(
+                        state = pagerState,
+                        modifier = Modifier.padding(if (isFullScreen) PaddingValues(0.dp) else innerPadding).fillMaxSize(),
+                        userScrollEnabled = !isDrawingMode && !isZoomMode && targetScale == 1f
+                    ) { pageIndex: Int ->
+                        ReaderPageContent(
+                            pdfRenderer = pdfRenderer,
+                            pageIndex = pageIndex,
+                            isFullScreen = isFullScreen,
+                            isEyeProtectionActive = isEyeProtectionActive,
+                            isDrawingMode = isDrawingMode,
+                            isZoomMode = isZoomMode,
+                            targetScale = targetScale,
+                            targetOffset = targetOffset,
+                            scale = scale,
+                            offset = offset,
+                            pageStrokes = pageStrokes,
+                            redoStrokes = redoStrokes,
+                            onTransform = { zoom: Float, pan: Offset ->
+                                targetScale = (targetScale * zoom).coerceIn(1f, 3.5f)
+                                if (targetScale > 1f) targetOffset += pan else targetOffset = Offset.Zero
                             }
-                            .graphicsLayer(
-                                scaleX = scale,
-                                scaleY = scale,
-                                translationX = offset.x,
-                                translationY = offset.y
-                            )
-                    ) {
-                        PdfPageItem(pdfRenderer, pageIndex, isFullScreen, isEyeProtectionActive)
-                        if (isDrawingMode) {
-                            DrawingCanvas(strokes, redos, Modifier.fillMaxSize())
-                        }
+                        )
+                    }
+                } else {
+                    VerticalPager(
+                        state = pagerState,
+                        modifier = Modifier.padding(if (isFullScreen) PaddingValues(0.dp) else innerPadding).fillMaxSize(),
+                        userScrollEnabled = !isDrawingMode && !isZoomMode && targetScale == 1f
+                    ) { pageIndex: Int ->
+                        ReaderPageContent(
+                            pdfRenderer = pdfRenderer,
+                            pageIndex = pageIndex,
+                            isFullScreen = isFullScreen,
+                            isEyeProtectionActive = isEyeProtectionActive,
+                            isDrawingMode = isDrawingMode,
+                            isZoomMode = isZoomMode,
+                            targetScale = targetScale,
+                            targetOffset = targetOffset,
+                            scale = scale,
+                            offset = offset,
+                            pageStrokes = pageStrokes,
+                            redoStrokes = redoStrokes,
+                            onTransform = { zoom: Float, pan: Offset ->
+                                targetScale = (targetScale * zoom).coerceIn(1f, 3.5f)
+                                if (targetScale > 1f) targetOffset += pan else targetOffset = Offset.Zero
+                            }
+                        )
                     }
                 }
             } else {
@@ -460,14 +560,51 @@ fun ReaderScreen(uri: Uri, onBack: () -> Unit) {
     
     if (showSearch) {
         var pageInput by remember { mutableStateOf("") }
+        
+        fun performJump() {
+            val p = pageInput.toIntOrNull()
+            if (p != null && p in 1..pageCount) {
+                scope.launch {
+                    pagerState.scrollToPage(p - 1) // Direct jump without animation
+                }
+                showSearch = false
+            } else if (p != null) {
+                Toast.makeText(context, "Please enter a page between 1 and $pageCount", Toast.LENGTH_SHORT).show()
+            }
+        }
+
         AlertDialog(
             onDismissRequest = { showSearch = false },
-            title = { Text("Enter Page No.") },
-            text = { OutlinedTextField(value = pageInput, onValueChange = { if (it.all { c -> c.isDigit() }) pageInput = it }, modifier = Modifier.fillMaxWidth()) },
-            confirmButton = { TextButton(onClick = {
-                val p = pageInput.toIntOrNull()
-                if (p != null && p in 1..pageCount) { scope.launch { pagerState.scrollToPage(p-1) }; showSearch = false }
-            }) { Text("Go") } }
+            title = { Text("Jump to Page", fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    Text("Total Pages: $pageCount", fontSize = 12.sp, color = Color.Gray)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = pageInput,
+                        onValueChange = { if (it.all { c -> c.isDigit() }) pageInput = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("Example: 15") },
+                        label = { Text("Enter Page Number") },
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Number,
+                            imeAction = ImeAction.Go
+                        ),
+                        keyboardActions = KeyboardActions(onGo = { performJump() }),
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = { performJump() }) {
+                    Text("Go Directly")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSearch = false }) {
+                    Text("Cancel")
+                }
+            }
         )
     }
 
@@ -509,6 +646,49 @@ fun DrawingCanvas(strokes: SnapshotStateList<DrawingStroke>, redoList: SnapshotS
                 currentPoints.forEach { lineTo(it.x, it.y) }
             }
             drawPath(path, Color.Red, style = Stroke(5f, cap = StrokeCap.Round))
+        }
+    }
+}
+
+@Composable
+fun ReaderPageContent(
+    pdfRenderer: android.graphics.pdf.PdfRenderer?,
+    pageIndex: Int,
+    isFullScreen: Boolean,
+    isEyeProtectionActive: Boolean,
+    isDrawingMode: Boolean,
+    isZoomMode: Boolean,
+    targetScale: Float,
+    targetOffset: Offset,
+    scale: Float,
+    offset: Offset,
+    pageStrokes: androidx.compose.runtime.snapshots.SnapshotStateMap<Int, SnapshotStateList<DrawingStroke>>,
+    redoStrokes: androidx.compose.runtime.snapshots.SnapshotStateMap<Int, SnapshotStateList<DrawingStroke>>,
+    onTransform: (Float, Offset) -> Unit
+) {
+    val strokes = pageStrokes.getOrPut(pageIndex) { mutableStateListOf<DrawingStroke>() }
+    val redos = redoStrokes.getOrPut(pageIndex) { mutableStateListOf<DrawingStroke>() }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(isDrawingMode, isZoomMode, targetScale) {
+                if (!isDrawingMode && isZoomMode) {
+                    detectTransformGestures { _, pan, zoom, _ ->
+                        onTransform(zoom, pan)
+                    }
+                }
+            }
+            .graphicsLayer(
+                scaleX = scale,
+                scaleY = scale,
+                translationX = offset.x,
+                translationY = offset.y
+            )
+    ) {
+        PdfPageItem(pdfRenderer, pageIndex, isFullScreen, isEyeProtectionActive)
+        if (isDrawingMode) {
+            DrawingCanvas(strokes, redos, Modifier.fillMaxSize())
         }
     }
 }

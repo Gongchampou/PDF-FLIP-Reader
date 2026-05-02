@@ -1,5 +1,14 @@
 package com.gong.pdfflip.pages
 
+/**
+ * SETTINGS PAGE - The "Control Center"
+ * This page handles all app-wide configurations.
+ * Key Features:
+ * 1. Theme Management: Choose between Light, Dark, Read (Sepia), and Ocean schemes.
+ * 2. Category Management: Rename or delete tags with professional confirmation dialogs.
+ * 3. App Info: Detailed version and description of PDF Flip.
+ */
+
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -12,8 +21,13 @@ import androidx.compose.material.icons.filled.ArrowDropUp
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Tag
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -22,6 +36,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -30,24 +45,23 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gong.pdfflip.ui.theme.ReadModeBackground
 import com.gong.pdfflip.ui.theme.ReadModeText
+import com.gong.pdfflip.ui.theme.getTagColor
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.net.URL
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 
-/**
- * SETTINGS PAGE
- * This page handles all app-wide configurations:
- * 1. Theme Management (Light, Dark, Sepia, Ocean)
- * 2. Tag Management (GitHub-style delete confirmation)
- * 3. About the App information
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(onBack: () -> Unit, onThemeChanged: (Int) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val clipboardManager = LocalClipboardManager.current
+    val uriHandler = LocalUriHandler.current
     
     // Theme Options
     val themeOptions = listOf(
@@ -200,6 +214,41 @@ fun SettingsScreen(onBack: () -> Unit, onThemeChanged: (Int) -> Unit) {
         )
     }
 
+    // Update State
+    var isCheckingUpdate by remember { mutableStateOf(false) }
+    var updateMessage by remember { mutableStateOf<String?>(null) }
+    val currentVersion = "1.0.0"
+
+    fun checkForUpdates() {
+        isCheckingUpdate = true
+        updateMessage = null
+        scope.launch(Dispatchers.IO) {
+            try {
+                // Example URL - Replace with your real raw version.txt link on GitHub
+                // val latestVersion = URL("https://raw.githubusercontent.com/Gongchampou/PDF-FLIP-Reader/main/version.txt").readText().trim()
+                
+                delay(2000) // Simulate network delay for effect
+                val latestVersion = "1.0.0" // Simulated result
+
+                withContext(Dispatchers.Main) {
+                    isCheckingUpdate = false
+                    if (latestVersion != currentVersion) {
+                        updateMessage = "New version $latestVersion available!"
+                        // In a real app, you'd trigger a download here
+                        // uriHandler.openUri("https://github.com/Gongchampou/PDF-FLIP-Reader/releases/latest")
+                    } else {
+                        Toast.makeText(context, "You are on the latest version", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    isCheckingUpdate = false
+                    Toast.makeText(context, "Update check failed", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -287,12 +336,12 @@ fun SettingsScreen(onBack: () -> Unit, onThemeChanged: (Int) -> Unit) {
 
             // --- SECTION 2: TAG MANAGEMENT (DELETE TAGS) ---
             item {
-                SettingsSectionHeader(title = "Manage Categories (Tags)", icon = Icons.Default.Tag, tint = currentTextColor)
+                SettingsSectionHeader(title = "Manage (Tags)", icon = Icons.Default.Tag, tint = currentTextColor)
             }
             
             item {
                 if (availableTags.isEmpty()) {
-                    Text("No categories created yet.", modifier = Modifier.padding(horizontal = 16.dp), color = Color.Gray, fontSize = 14.sp)
+                    Text("No tag created yet.", modifier = Modifier.padding(horizontal = 16.dp), color = Color.Gray, fontSize = 14.sp)
                 } else {
                     // Show tags in a tight 2-column grid
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -302,9 +351,11 @@ fun SettingsScreen(onBack: () -> Unit, onThemeChanged: (Int) -> Unit) {
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 pair.forEach { tag ->
+                                    val tagColor = getTagColor(tag)
                                     Card(
                                         modifier = Modifier.weight(1f),
-                                        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.6f))
+                                        colors = CardDefaults.cardColors(containerColor = tagColor.copy(alpha = 0.1f)),
+                                        border = androidx.compose.foundation.BorderStroke(0.5.dp, tagColor.copy(alpha = 0.3f))
                                     ) {
                                         Row(
                                             modifier = Modifier.padding(start = 12.dp, end = 2.dp, top = 2.dp, bottom = 2.dp),
@@ -314,8 +365,8 @@ fun SettingsScreen(onBack: () -> Unit, onThemeChanged: (Int) -> Unit) {
                                             Text(
                                                 text = tag,
                                                 fontSize = 12.sp,
-                                                fontWeight = FontWeight.Medium,
-                                                color = currentTextColor,
+                                                fontWeight = FontWeight.Bold,
+                                                color = tagColor,
                                                 modifier = Modifier.weight(1f),
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
@@ -352,9 +403,101 @@ fun SettingsScreen(onBack: () -> Unit, onThemeChanged: (Int) -> Unit) {
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text("PDF Flip Reader", fontWeight = FontWeight.Bold, color = currentTextColor)
-                        Text("Version 1.0.0", fontSize = 12.sp, color = Color.Gray)
+                        Text("Version $currentVersion", fontSize = 12.sp, color = Color.Gray)
                         Spacer(Modifier.height(8.dp))
                         Text("A professional-grade document reader designed for high performance and eye protection.", fontSize = 14.sp, color = currentTextColor.copy(alpha = 0.8f))
+                        
+                        Spacer(Modifier.height(16.dp))
+
+                        // Update Button
+                        Button(
+                            onClick = { checkForUpdates() },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !isCheckingUpdate,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (updateMessage != null) Color(0xFF4CAF50) else currentTextColor.copy(alpha = 0.1f),
+                                contentColor = if (updateMessage != null) Color.White else currentTextColor
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(vertical = 12.dp)
+                        ) {
+                            if (isCheckingUpdate) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = currentTextColor)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Checking...", fontSize = 14.sp)
+                            } else {
+                                Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(updateMessage ?: "Check for Updates", fontSize = 14.sp)
+                            }
+                        }
+
+                        if (updateMessage != null) {
+                            Text(
+                                text = "Click the button above to go to the download page.",
+                                fontSize = 11.sp,
+                                color = Color.Gray,
+                                modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // --- SECTION 4: LINK & UPDATES (SOCIAL LINKS) ---
+            item {
+                Spacer(Modifier.height(16.dp))
+                
+                Text("Link Update:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = currentTextColor.copy(alpha = 0.6f))
+                Spacer(Modifier.height(8.dp))
+
+                // Priority Row: Play Store & Google Drive
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    item {
+                        AssistChip(
+                            onClick = { uriHandler.openUri("https://play.google.com/store/apps/details?id=com.gong.pdfflip") },
+                            label = { Text("Play Store", fontSize = 11.sp) },
+                            leadingIcon = { Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            colors = AssistChipDefaults.assistChipColors(labelColor = currentTextColor)
+                        )
+                    }
+                    item {
+                        AssistChip(
+                            onClick = { uriHandler.openUri("https://drive.google.com/drive/folders/your_id") },
+                            label = { Text("Google Drive", fontSize = 11.sp) },
+                            leadingIcon = { Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            colors = AssistChipDefaults.assistChipColors(labelColor = currentTextColor)
+                        )
+                    }
+                }
+                
+                Spacer(Modifier.height(8.dp))
+
+                // Secondary Row: GitHub & Website
+                Text("My site:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = currentTextColor.copy(alpha = 0.6f))
+                Spacer(Modifier.height(8.dp))
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    item {
+                        AssistChip(
+                            onClick = { uriHandler.openUri("https://github.com/Gongchampou/PDF-FLIP-Reader") },
+                            label = { Text("GitHub", fontSize = 11.sp) },
+                            leadingIcon = { Icon(Icons.Default.Terminal, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            colors = AssistChipDefaults.assistChipColors(labelColor = currentTextColor)
+                        )
+                    }
+                    item {
+                        AssistChip(
+                            onClick = { uriHandler.openUri("https://gongchampou.pages.dev") },
+                            label = { Text("Website", fontSize = 11.sp) },
+                            leadingIcon = { Icon(Icons.Default.Language, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            colors = AssistChipDefaults.assistChipColors(labelColor = currentTextColor)
+                        )
                     }
                 }
             }

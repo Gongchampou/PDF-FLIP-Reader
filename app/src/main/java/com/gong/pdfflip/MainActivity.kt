@@ -1,5 +1,14 @@
 package com.gong.pdfflip
 
+/**
+ * MAIN ACTIVITY - The "Brain" of the App
+ * This file is the starting point of the application.
+ * It handles:
+ * 1. Global Navigation (switching between Library, Reader, and Settings).
+ * 2. Theme Management (Loading and applying the global color scheme).
+ * 3. App-wide state (like which PDF is currently open).
+ */
+
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -47,14 +56,16 @@ class MainActivity : ComponentActivity() {
 fun MainAppNavigation(currentTheme: Int, onThemeChange: (Int) -> Unit) {
     // Current screen state
     var currentScreen by remember { mutableStateOf(Screen.Library) }
-    // Selected PDF URI
+    // Selected PDF URI and page
     var selectedUri by remember { mutableStateOf<Uri?>(null) }
+    var startPage by remember { mutableIntStateOf(0) }
 
     when (currentScreen) {
         Screen.Library -> {
             LibraryScreen(
-                onBookClick = { uri ->
+                onBookClick = { uri, page ->
                     selectedUri = uri
+                    startPage = page
                     currentScreen = Screen.Reader
                 },
                 onSettingsClick = {
@@ -66,6 +77,7 @@ fun MainAppNavigation(currentTheme: Int, onThemeChange: (Int) -> Unit) {
             selectedUri?.let { uri ->
                 ReaderScreen(
                     uri = uri, 
+                    initialPage = startPage,
                     onBack = { currentScreen = Screen.Library }
                 )
             }
