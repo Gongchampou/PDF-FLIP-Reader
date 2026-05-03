@@ -639,7 +639,7 @@ fun SettingsScreen(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = "Apps is a professional document reader. Flipping the pdf to fill the book.",
+                        text = "This is a professional document reader. Flipping the pdf to fill the book.",
                         fontSize = 11.sp,
                         color = currentTextColor.copy(alpha = 0.5f),
                         textAlign = TextAlign.Start

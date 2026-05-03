@@ -25,6 +25,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -81,6 +82,21 @@ data class Book(
 enum class ImportStatus { Success, Duplicate, Error }
 data class ImportResult(val name: String, val status: ImportStatus)
 
+val tagColorOptions = listOf(
+    "#E91E63", // Pink
+    "#9C27B0", // Purple
+    "#673AB7", // Deep Purple
+    "#3F51B5", // Indigo
+    "#2196F3", // Blue
+    "#03A9F4", // Light Blue
+    "#009688", // Teal
+    "#4CAF50", // Green
+    "#FF9800", // Orange
+    "#FF5722", // Deep Orange
+    "#795548", // Brown
+    "#607D8B"  // Blue Grey
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(onBookClick: (Book) -> Unit, onSettingsClick: () -> Unit, titleFontSizeIndex: Int = 1) {
@@ -134,6 +150,21 @@ fun LibraryScreen(onBookClick: (Book) -> Unit, onSettingsClick: () -> Unit, titl
     val importResults = remember { mutableStateListOf<ImportResult>() }
     var showImportSummary by remember { mutableStateOf(false) }
 
+    // Map of Tag Name to its Color object
+    val tagToColorMap = remember(availableTags.toList()) {
+        availableTags.associate { tagString ->
+            val parts = tagString.split("|")
+            val name = parts[0]
+            val color = try {
+                if (parts.size > 1) Color(android.graphics.Color.parseColor(parts[1]))
+                else getTagColor(name)
+            } catch (e: Exception) {
+                getTagColor(name)
+            }
+            name to color
+        }
+    }
+
     val libraryBooks = remember { mutableStateListOf<Book>() }
     val recentBooks = remember { mutableStateListOf<Book>() }
 
@@ -158,6 +189,13 @@ fun LibraryScreen(onBookClick: (Book) -> Unit, onSettingsClick: () -> Unit, titl
             } else {
                 MediaStore.Files.getContentUri("external")
             }
+
+            // Include pending files in initial load to show potentially "stuck" duplicates
+            val queryUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                MediaStore.setIncludePending(collection)
+            } else {
+                collection
+            }
             
             val projection = arrayOf(
                 MediaStore.Files.FileColumns._ID,
@@ -177,7 +215,7 @@ fun LibraryScreen(onBookClick: (Book) -> Unit, onSettingsClick: () -> Unit, titl
                 arrayOf("%/PDF Flip/%", "application/pdf")
             }
 
-            context.contentResolver.query(collection, projection, selection, selectionArgs, null)?.use { cursor ->
+            context.contentResolver.query(queryUri, projection, selection, selectionArgs, null)?.use { cursor ->
                 val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
                 val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME)
                 
@@ -298,32 +336,42 @@ fun LibraryScreen(onBookClick: (Book) -> Unit, onSettingsClick: () -> Unit, titl
                         try {
                             val fileName = getFileName(context, sourceUri) ?: "Document_${System.currentTimeMillis()}.pdf"
                             
-                            // 1. FAST CHECK: Is it already on our UI list?
-                            if (libraryBooks.any { it.name == fileName }) {
+                            // 1. FAST CHECK: Is it already on our UI list? (Case-Insensitive)
+                            if (libraryBooks.any { it.name.equals(fileName, ignoreCase = true) }) {
                                 importResults.add(ImportResult(fileName, ImportStatus.Duplicate))
                                 return@forEach
                             }
 
-                            // 2. INTELLIGENT DISK CHECK: Does the file exist in the "PDF Flip" folder on storage?
+                            // 2. IRONCLAD DISK CHECK: Does the file exist in the "PDF Flip" folder on storage?
                             val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                                 MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL)
                             } else {
                                 MediaStore.Files.getContentUri("external")
                             }
                             
-                            val projection = arrayOf(MediaStore.Files.FileColumns.DISPLAY_NAME)
-                            val selection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                "${MediaStore.Files.FileColumns.DISPLAY_NAME} = ? AND ${MediaStore.Files.FileColumns.RELATIVE_PATH} LIKE ?"
+                            // Include pending files to find hidden conflicts that trigger (1) suffixes
+                            val queryUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                MediaStore.setIncludePending(collection)
                             } else {
-                                "${MediaStore.Files.FileColumns.DISPLAY_NAME} = ? AND ${MediaStore.Files.FileColumns.DATA} LIKE ?"
+                                collection
                             }
+
+                            val projection = arrayOf(MediaStore.Files.FileColumns.DISPLAY_NAME)
+                            
+                            // Strict Case-Insensitive SQL check
+                            val selection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                "LOWER(${MediaStore.Files.FileColumns.DISPLAY_NAME}) = LOWER(?) AND LOWER(${MediaStore.Files.FileColumns.RELATIVE_PATH}) LIKE LOWER(?)"
+                            } else {
+                                "LOWER(${MediaStore.Files.FileColumns.DATA}) LIKE LOWER(?)"
+                            }
+                            
                             val selectionArgs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                                 arrayOf(fileName, "%Documents/PDF Flip%")
                             } else {
-                                arrayOf(fileName, "%/PDF Flip/%")
+                                arrayOf("%/PDF Flip/$fileName")
                             }
 
-                            val existsOnDisk = context.contentResolver.query(collection, projection, selection, selectionArgs, null)?.use { 
+                            val existsOnDisk = context.contentResolver.query(queryUri, projection, selection, selectionArgs, null)?.use { 
                                 it.count > 0 
                             } ?: false
 
@@ -333,23 +381,41 @@ fun LibraryScreen(onBookClick: (Book) -> Unit, onSettingsClick: () -> Unit, titl
                             }
 
                             // 3. SAFE IMPORT: Only create the file if it's truly new
+                            // We set IS_PENDING = 1 first to be safe, then commit
                             val values = ContentValues().apply {
                                 put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
                                 put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                                     put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOCUMENTS + "/PDF Flip")
+                                    put(MediaStore.MediaColumns.IS_PENDING, 1)
                                 }
                             }
                             
                             val destinationUri = context.contentResolver.insert(collection, values)
                             
                             destinationUri?.let { destUri ->
+                                // FINAL GUARD: Check if Android renamed it behind our backs
+                                val actualName = getFileName(context, destUri) ?: fileName
+                                if (!actualName.equals(fileName, ignoreCase = true)) {
+                                    // Android added a (1) suffix! Delete it immediately.
+                                    context.contentResolver.delete(destUri, null, null)
+                                    importResults.add(ImportResult(fileName, ImportStatus.Duplicate))
+                                    return@forEach
+                                }
+
                                 context.contentResolver.openInputStream(sourceUri)?.use { input ->
                                     context.contentResolver.openOutputStream(destUri)?.use { output ->
                                         input.copyTo(output)
                                     }
                                 }
                                 
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                    val updateValues = ContentValues().apply {
+                                        put(MediaStore.MediaColumns.IS_PENDING, 0)
+                                    }
+                                    context.contentResolver.update(destUri, updateValues, null, null)
+                                }
+
                                 val newBook = Book(
                                     name = fileName, 
                                     uri = destUri,
@@ -374,9 +440,6 @@ fun LibraryScreen(onBookClick: (Book) -> Unit, onSettingsClick: () -> Unit, titl
                     withContext(Dispatchers.Main) {
                         saveLibraryMetadata()
                         
-                        // Logic:
-                        // 1. If only 1 file picked and it's success -> Open it
-                        // 2. Otherwise -> Show Summary Dialog
                         if (uris.size == 1 && successCount == 1 && lastImportedBook != null) {
                             onBookClick(lastImportedBook!!)
                         } else {
@@ -391,23 +454,49 @@ fun LibraryScreen(onBookClick: (Book) -> Unit, onSettingsClick: () -> Unit, titl
     // DIALOG: Create New Tag
     if (showCreateTagDialog) {
         var newTagName by remember { mutableStateOf("") }
+        var selectedColorHex by remember { mutableStateOf(tagColorOptions[0]) }
         AlertDialog(
             onDismissRequest = { showCreateTagDialog = false },
             title = { Text("Create New Category") },
             text = {
-                OutlinedTextField(
-                    value = newTagName,
-                    onValueChange = { newTagName = it },
-                    label = { Text("Category Name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                Column {
+                    OutlinedTextField(
+                        value = newTagName,
+                        onValueChange = { newTagName = it },
+                        label = { Text("Category Name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    Text("Select Color:", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(tagColorOptions) { hex ->
+                            val color = Color(android.graphics.Color.parseColor(hex))
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(color)
+                                    .clickable { selectedColorHex = hex }
+                                    .border(
+                                        width = if (selectedColorHex == hex) 3.dp else 0.dp,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        shape = CircleShape
+                                    )
+                            )
+                        }
+                    }
+                }
             },
             confirmButton = {
                 Button(onClick = {
-                    if (newTagName.isNotBlank() && !availableTags.contains(newTagName)) {
-                        availableTags.add(newTagName)
-                        saveLibraryMetadata()
+                    if (newTagName.isNotBlank()) {
+                        val exists = availableTags.any { it.split("|")[0].equals(newTagName, ignoreCase = true) }
+                        if (!exists) {
+                            availableTags.add("$newTagName|$selectedColorHex")
+                            saveLibraryMetadata()
+                        }
                     }
                     showCreateTagDialog = false
                 }) { Text("Create") }
@@ -427,7 +516,10 @@ fun LibraryScreen(onBookClick: (Book) -> Unit, onSettingsClick: () -> Unit, titl
                         Text("No categories created yet. Click the + button in the library to create one.", color = Color.Gray, fontSize = 14.sp)
                     } else {
                         LazyColumn(modifier = Modifier.heightIn(max = 200.dp)) {
-                            items(availableTags) { tag ->
+                            items(availableTags) { tagString ->
+                                val parts = tagString.split("|")
+                                val tagName = parts[0]
+                                val tagColor = tagToColorMap[tagName] ?: getTagColor(tagName)
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier
@@ -436,16 +528,16 @@ fun LibraryScreen(onBookClick: (Book) -> Unit, onSettingsClick: () -> Unit, titl
                                             val book = showAssignTagDialog!!
                                             val index = libraryBooks.indexOfFirst { it.name == book.name }
                                             if (index != -1) {
-                                                libraryBooks[index] = book.copy(tag = tag)
+                                                libraryBooks[index] = book.copy(tag = tagName)
                                                 saveLibraryMetadata()
                                             }
                                             showAssignTagDialog = null
                                         }
                                         .padding(vertical = 12.dp)
                                 ) {
-                                    RadioButton(selected = showAssignTagDialog!!.tag == tag, onClick = null)
+                                    RadioButton(selected = showAssignTagDialog!!.tag == tagName, onClick = null)
                                     Spacer(Modifier.width(8.dp))
-                                    Text(tag)
+                                    Text(tagName, color = tagColor, fontWeight = FontWeight.Medium)
                                 }
                             }
                         }
@@ -527,6 +619,90 @@ fun LibraryScreen(onBookClick: (Book) -> Unit, onSettingsClick: () -> Unit, titl
         )
     }
 
+    // Import Summary Dialog
+    if (showImportSummary) {
+        val successColor = Color(0xFF2E7D32) // Dark Forest Green
+        val errorColor = Color(0xFFC62828)   // Deep Red
+
+        AlertDialog(
+            onDismissRequest = { showImportSummary = false },
+            title = { Text("Import Summary", fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    val successCount = importResults.count { it.status == ImportStatus.Success }
+                    val duplicateCount = importResults.count { it.status == ImportStatus.Duplicate }
+                    
+                    Text("Results for ${importResults.size} files:", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                    Spacer(Modifier.height(8.dp))
+                    
+                    LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                        items(importResults) { result ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = when(result.status) {
+                                        ImportStatus.Success -> Icons.Default.CheckCircle
+                                        ImportStatus.Duplicate -> Icons.Default.Error
+                                        ImportStatus.Error -> Icons.Default.Cancel
+                                    },
+                                    contentDescription = null,
+                                    tint = when(result.status) {
+                                        ImportStatus.Success -> successColor
+                                        else -> errorColor
+                                    },
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = result.name,
+                                    color = when(result.status) {
+                                        ImportStatus.Success -> successColor
+                                        else -> errorColor
+                                    },
+                                    fontSize = 14.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    text = when(result.status) {
+                                        ImportStatus.Success -> "Added"
+                                        ImportStatus.Duplicate -> "Duplicate"
+                                        ImportStatus.Error -> "Error"
+                                    },
+                                    fontSize = 11.sp,
+                                    color = when(result.status) {
+                                        ImportStatus.Success -> successColor.copy(alpha = 0.8f)
+                                        else -> errorColor.copy(alpha = 0.8f)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    
+                    if (duplicateCount > 0) {
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            "Note: Duplicates were found in your library or storage and were skipped.",
+                            fontSize = 12.sp,
+                            color = Color.Gray,
+                            lineHeight = 16.sp
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { showImportSummary = false }) {
+                    Text("Got it")
+                }
+            }
+        )
+    }
+//Recent Activity Area
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -605,217 +781,220 @@ fun LibraryScreen(onBookClick: (Book) -> Unit, onSettingsClick: () -> Unit, titl
     ) {
         Scaffold(
             topBar = {
-                TopAppBar(
-                    navigationIcon = {
-                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                            Icon(Icons.Default.History, contentDescription = "Recent", tint = MaterialTheme.colorScheme.onBackground)
-                        }
-                    },
-                    title = {
-                        // Custom Search Bar to prevent clipping and reduce font size
-                        BasicTextField(
-                            value = searchQuery,
-                            onValueChange = { searchQuery = it },
-                            textStyle = LocalTextStyle.current.copy(
-                                color = MaterialTheme.colorScheme.onBackground,
-                                fontSize = 12.sp
-                            ),
-                            cursorBrush = SolidColor(MaterialTheme.colorScheme.onBackground),
-                            singleLine = true,
-                            decorationBox = { innerTextField ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(38.dp)
-                                        .background(
-                                            MaterialTheme.colorScheme.onBackground.copy(alpha = 0.1f),
-                                            CircleShape
-                                        )
-                                        .padding(horizontal = 12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        Icons.Default.Search,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                                        modifier = Modifier.size(16.dp)
+            TopAppBar(
+                navigationIcon = {
+                    IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                        Icon(Icons.Default.History, contentDescription = "Recent", tint = MaterialTheme.colorScheme.onBackground)
+                    }
+                },
+                title = {
+                    // Custom Search Bar to prevent clipping and reduce font size
+                    BasicTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        textStyle = LocalTextStyle.current.copy(
+                            color = MaterialTheme.colorScheme.onBackground,
+                            fontSize = 12.sp
+                        ),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.onBackground),
+                        singleLine = true,
+                        decorationBox = { innerTextField ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(38.dp)
+                                    .background(
+                                        MaterialTheme.colorScheme.onBackground.copy(alpha = 0.1f),
+                                        CircleShape
                                     )
-                                    Spacer(Modifier.width(8.dp))
-                                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                                        if (searchQuery.isEmpty()) {
-                                            Text(
-                                                "Search...",
-                                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f),
-                                                fontSize = 12.sp
-                                            )
-                                        }
-                                        innerTextField()
+                                    .padding(horizontal = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.Search,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                                    if (searchQuery.isEmpty()) {
+                                        Text(
+                                            "Search...",
+                                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f),
+                                            fontSize = 12.sp
+                                        )
                                     }
-                                    if (searchQuery.isNotEmpty()) {
-                                        IconButton(
-                                            onClick = { searchQuery = "" },
-                                            modifier = Modifier.size(24.dp)
-                                        ) {
-                                            Icon(
-                                                Icons.Default.Clear,
-                                                contentDescription = "Clear",
-                                                tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        }
+                                    innerTextField()
+                                }
+                                if (searchQuery.isNotEmpty()) {
+                                    IconButton(
+                                        onClick = { searchQuery = "" },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Clear,
+                                            contentDescription = "Clear",
+                                            tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                                            modifier = Modifier.size(16.dp)
+                                        )
                                     }
                                 }
                             }
-                        )
-                    },
-                    actions = {
-                        // Import Action
-                        IconButton(onClick = { filePickerLauncher.launch(arrayOf("application/pdf")) }) {
-                            Icon(Icons.Default.Add, contentDescription = "Import PDF", tint = MaterialTheme.colorScheme.onBackground)
                         }
-                        // View Toggle Action
-                        IconButton(onClick = { isGridView = !isGridView }) {
-                            Icon(
-                                if (isGridView) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView,
-                                contentDescription = "Toggle View",
-                                tint = MaterialTheme.colorScheme.onBackground
-                            )
-                        }
-                        IconButton(onClick = onSettingsClick) {
-                            Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.onBackground)
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
-                )
-            },
-            containerColor = MaterialTheme.colorScheme.background
-        ) { innerPadding ->
-            Column(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
-                // Category/Tag Selection Row (Scrollable tags with pinned Add button)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    LazyRow(
-                        modifier = Modifier.weight(1f),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        contentPadding = PaddingValues(start = 16.dp, end = 8.dp)
-                    ) {
-                        item {
-                            FilterChip(
-                                selected = selectedFilterTag == null,
-                                onClick = { selectedFilterTag = null },
-                                label = { Text("All") },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedLabelColor = MaterialTheme.colorScheme.onBackground,
-                                    labelColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
-                                )
-                            )
-                        }
-                        items(availableTags) { tag ->
-                            val tagColor = getTagColor(tag)
-                            FilterChip(
-                                selected = selectedFilterTag == tag,
-                                onClick = { selectedFilterTag = if (selectedFilterTag == tag) null else tag },
-                                label = { Text(tag) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedLabelColor = Color.White,
-                                    selectedContainerColor = tagColor,
-                                    labelColor = tagColor.copy(alpha = 0.8f)
-                                ),
-                                border = FilterChipDefaults.filterChipBorder(
-                                    enabled = true,
-                                    selected = selectedFilterTag == tag,
-                                    borderColor = tagColor.copy(alpha = 0.5f)
-                                )
-                            )
-                        }
+                    )
+                },
+                actions = {
+                    // Import Action
+                    IconButton(onClick = { filePickerLauncher.launch(arrayOf("application/pdf")) }) {
+                        Icon(Icons.Default.Add, contentDescription = "Import PDF", tint = MaterialTheme.colorScheme.onBackground)
                     }
-                    // Pinned Add Button in the right corner
-                    IconButton(
-                        onClick = { showCreateTagDialog = true },
-                        modifier = Modifier.padding(end = 8.dp).size(40.dp)
-                    ) {
+                    // View Toggle Action
+                    IconButton(onClick = { isGridView = !isGridView }) {
                         Icon(
-                            Icons.Default.AddCircle, 
-                            contentDescription = "Create Category", 
-                            tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f)
+                            if (isGridView) Icons.AutoMirrored.Filled.ViewList else Icons.Default.GridView,
+                            contentDescription = "Toggle View",
+                            tint = MaterialTheme.colorScheme.onBackground
+                        )
+                    }
+                    IconButton(onClick = onSettingsClick) {
+                        Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.onBackground)
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
+            )
+        },
+        containerColor = MaterialTheme.colorScheme.background
+    ) { innerPadding ->
+        Column(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
+            // Category/Tag Selection Row (Scrollable tags with pinned Add button)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                LazyRow(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    contentPadding = PaddingValues(start = 16.dp, end = 8.dp)
+                ) {
+                    item {
+                        FilterChip(
+                            selected = selectedFilterTag == null,
+                            onClick = { selectedFilterTag = null },
+                            label = { Text("All") },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedLabelColor = MaterialTheme.colorScheme.onBackground,
+                                labelColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                            )
+                        )
+                    }
+                    items(availableTags) { tagString ->
+                        val tagName = tagString.split("|")[0]
+                        val tagColor = tagToColorMap[tagName] ?: getTagColor(tagName)
+                        FilterChip(
+                            selected = selectedFilterTag == tagName,
+                            onClick = { selectedFilterTag = if (selectedFilterTag == tagName) null else tagName },
+                            label = { Text(tagName) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedLabelColor = Color.White,
+                                selectedContainerColor = tagColor,
+                                labelColor = tagColor.copy(alpha = 0.8f)
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = true,
+                                selected = selectedFilterTag == tagName,
+                                borderColor = tagColor.copy(alpha = 0.5f)
+                            )
                         )
                     }
                 }
+                // Pinned Add Button in the right corner
+                IconButton(
+                    onClick = { showCreateTagDialog = true },
+                    modifier = Modifier.padding(end = 8.dp).size(40.dp)
+                ) {
+                    Icon(
+                        Icons.Default.AddCircle, 
+                        contentDescription = "Create Category", 
+                        tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f)
+                    )
+                }
+            }
 
-                // Removed the old Import Row to keep the Top Bar clean
+            // Removed the old Import Row to keep the Top Bar clean
 
-                if (libraryBooks.isEmpty()) {
-                    Column(
-                        modifier = Modifier.fillMaxSize().padding(bottom = 64.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
+            if (libraryBooks.isEmpty()) {
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(bottom = 64.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text("Your Library is Empty", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+                    Text(
+                        "Start your journey by importing a PDF file.",
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(start = 32.dp, end = 32.dp, top = 8.dp),
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                    )
+                }
+            } else if (filteredBooks.isEmpty() && (searchQuery.isNotEmpty() || selectedFilterTag != null)) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("No books found for this category or search", color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f))
+                }
+            } else {
+                if (isGridView) {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(4), // Increased from 3 to 4 for smaller cards
+                        contentPadding = PaddingValues(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("Your Library is Empty", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
-                        Text(
-                            "Start your journey by importing a PDF file.",
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(start = 32.dp, end = 32.dp, top = 8.dp),
-                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
-                        )
-                    }
-                } else if (filteredBooks.isEmpty() && (searchQuery.isNotEmpty() || selectedFilterTag != null)) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("No books found for this category or search", color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f))
+                        items(filteredBooks) { book ->
+                            BookGridItem(book, 
+                                tagColor = tagToColorMap[book.tag] ?: Color.Gray,
+                                fontSize = gridFontSize,
+                                lineHeight = gridLineHeight,
+                                onClick = { 
+                                    updateRecent(book, book.currentPage, book.totalPages)
+                                    onBookClick(book) 
+                                },
+                                onDelete = {
+                                    bookToDelete = book
+                                    deleteConfirmCode = (1000 + Random.nextInt(9000)).toString()
+                                },
+                                onTagClick = { showAssignTagDialog = book }
+                            )
+                        }
                     }
                 } else {
-                    if (isGridView) {
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(4), // Increased from 3 to 4 for smaller cards
-                            contentPadding = PaddingValues(12.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(filteredBooks) { book ->
-                                BookGridItem(book, 
-                                    fontSize = gridFontSize,
-                                    lineHeight = gridLineHeight,
-                                    onClick = { 
-                                        updateRecent(book, book.currentPage, book.totalPages)
-                                        onBookClick(book) 
-                                    },
-                                    onDelete = {
-                                        bookToDelete = book
-                                        deleteConfirmCode = (1000 + Random.nextInt(9000)).toString()
-                                    },
-                                    onTagClick = { showAssignTagDialog = book }
-                                )
-                            }
-                        }
-                    } else {
-                        LazyColumn(
-                            contentPadding = PaddingValues(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(filteredBooks) { book ->
-                                BookListItem(book, 
-                                    fontSize = listFontSize,
-                                    lineHeight = listLineHeight,
-                                    onClick = { 
-                                        updateRecent(book, book.currentPage, book.totalPages)
-                                        onBookClick(book)
-                                    },
-                                    onDelete = {
-                                        bookToDelete = book
-                                        deleteConfirmCode = (1000 + Random.nextInt(9000)).toString()
-                                    },
-                                    onTagClick = { showAssignTagDialog = book }
-                                )
-                            }
+                    LazyColumn(
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(filteredBooks) { book ->
+                            BookListItem(book, 
+                                tagColor = tagToColorMap[book.tag] ?: Color.Gray,
+                                fontSize = listFontSize,
+                                lineHeight = listLineHeight,
+                                onClick = { 
+                                    updateRecent(book, book.currentPage, book.totalPages)
+                                    onBookClick(book)
+                                },
+                                onDelete = {
+                                    bookToDelete = book
+                                    deleteConfirmCode = (1000 + Random.nextInt(9000)).toString()
+                                },
+                                onTagClick = { showAssignTagDialog = book }
+                            )
                         }
                     }
                 }
             }
         }
+    }
     }
 }
 
@@ -870,7 +1049,7 @@ fun BookCover(uri: Uri, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun BookGridItem(book: Book, fontSize: androidx.compose.ui.unit.TextUnit, lineHeight: androidx.compose.ui.unit.TextUnit, onClick: () -> Unit, onDelete: () -> Unit, onTagClick: () -> Unit) {
+fun BookGridItem(book: Book, tagColor: Color, fontSize: androidx.compose.ui.unit.TextUnit, lineHeight: androidx.compose.ui.unit.TextUnit, onClick: () -> Unit, onDelete: () -> Unit, onTagClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -952,7 +1131,6 @@ fun BookGridItem(book: Book, fontSize: androidx.compose.ui.unit.TextUnit, lineHe
                         .size(20.dp)
                         .background(Color.Black.copy(alpha = 0.2f), CircleShape)
                 ) {
-                    val tagColor = getTagColor(book.tag)
                     Icon(
                         Icons.Default.Label,
                         contentDescription = "Tag", 
@@ -974,7 +1152,7 @@ fun BookGridItem(book: Book, fontSize: androidx.compose.ui.unit.TextUnit, lineHe
 }
 
 @Composable
-fun BookListItem(book: Book, fontSize: androidx.compose.ui.unit.TextUnit, lineHeight: androidx.compose.ui.unit.TextUnit, onClick: () -> Unit, onDelete: () -> Unit, onTagClick: () -> Unit) {
+fun BookListItem(book: Book, tagColor: Color, fontSize: androidx.compose.ui.unit.TextUnit, lineHeight: androidx.compose.ui.unit.TextUnit, onClick: () -> Unit, onDelete: () -> Unit, onTagClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -1019,7 +1197,6 @@ fun BookListItem(book: Book, fontSize: androidx.compose.ui.unit.TextUnit, lineHe
                 }
             }
             IconButton(onClick = onTagClick, modifier = Modifier.size(32.dp)) {
-                val tagColor = getTagColor(book.tag)
                 Icon(Icons.Default.Label, contentDescription = "Tag", tint = if (book.tag != null) tagColor else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f), modifier = Modifier.size(16.dp))
             }
             IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {

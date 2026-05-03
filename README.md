@@ -7,6 +7,9 @@ Welcome to **PDFFlip**! This is a simple yet powerful Android app designed to he
 ## 🚀 Key Features
 
 -   **Smart Library**: Import PDFs from your device and organize them with colorful tags.
+-   **Custom Tag Colors 🎨**: You can now choose a specific color for every category you create!
+-   **Ironclad Duplicate Protection**: The app prevents naming mess by strictly blocking duplicates. If the system tries to auto-rename a file with a suffix like `(1)`, the app identifies it and deletes it instantly to keep your folder clean.
+-   **Import Summary**: When importing files, the app identifies duplicates and shows a detailed summary (Green for new, Red for skipped).
 -   **Reading Progress**: The app remembers exactly where you left off.
 -   **Two Reading Modes**:
     -   **Horizontal Flip**: A classic book-like experience.
@@ -36,26 +39,37 @@ Let's look at some of the most important parts of the code.
 
 This page uses a **`LazyVerticalGrid`** to show your books. Think of a `LazyVerticalGrid` like a smart table that only draws what you can see on the screen to save battery and memory.
 
+#### 🎨 Custom Tag Colors Logic:
+-   **Line 153-167**: We use a `tagToColorMap`. This is like a special lookup book where the app checks: *"Hey, what color did the user pick for the 'Science' tag?"* and then displays it!
+-   **Line 466-483**: In the "Create New Category" dialog, we added a row of color circles. When you pick a color, it's saved alongside the tag name using a `|` separator (e.g., `Work|#FF0000`).
+
 #### How a Book Card is Built (`BookGridItem` function):
 ```kotlin
-// Line 887: We use a Column to stack things vertically
-Column(modifier = Modifier.fillMaxSize()) {
-    // Top part: The Book Cover
-    BookCover(uri = book.uri, ...)
-    
-    // Middle part: The Book Title
-    Column(...) {
-        Text(text = book.name, ...)
-    }
+// Line 1051: The Book Card function starts here
+@Composable
+fun BookGridItem(book: Book, tagColor: Color, ...) {
+    Card(...) {
+        Box(...) {
+            Column(...) {
+                // Line 1065: The Book Cover image
+                BookCover(uri = book.uri, ...)
+                
+                // Line 1083: The Book Title
+                Text(text = book.name.substringBeforeLast("."), ...)
 
-    // Bottom part: The Progress Bar
-    if (book.totalPages > 0) {
-        // We calculate progress as (Current Page / Total Pages)
-        LinearProgressIndicator(progress = { progress }, ...)
+                // Line 1102: The Progress Bar
+                if (book.totalPages > 0) {
+                    LinearProgressIndicator(progress = { progress }, color = MaterialTheme.colorScheme.primary, ...)
+                }
+            }
+            
+            // Line 1130: The Action Buttons (Tag & Delete)
+            // Notice how 'tint = tagColor' uses your chosen color!
+            Icon(Icons.Default.Label, tint = tagColor, ...)
+        }
     }
 }
 ```
-**Why the progress bar is at the bottom?** We moved it inside the main `Column` at the very end. Since Compose stacks items one after another, placing it last ensures it stays at the absolute bottom of the card!
 
 ---
 
@@ -70,8 +84,6 @@ We use a **`HorizontalPager`** for flipping and a **`VerticalPager`** for scroll
 
 #### Drawing on PDFs:
 We use a **`Canvas`**. A `Canvas` is like a digital whiteboard where you can draw anything using "Points" (X and Y coordinates).
--   When you touch the screen, we record the `Offset` (the exact spot).
--   We then "normalize" these points (change them to a scale of 0 to 1) so that the drawing looks the same even if you rotate your phone!
 
 ---
 
@@ -92,7 +104,7 @@ Think of an `enum` as a list of "fixed options." The app simply checks `if (curr
 ## 🛠️ How to Customize
 
 -   **Change the Theme**: Go to `ui/theme/Theme.kt`. You can add new colors to the `PDFFlipTheme` to change the app's look.
--   **Add New Tags**: In the Library, click the "+" button next to the category list to create new tags like "Fiction," "Science," or "To Read."
+-   **Add New Tags**: In the Library, click the "+" button next to the category list to create new tags. **Don't forget to pick a color!**
 
 ---
 
