@@ -17,6 +17,23 @@ Welcome to **PDFFlip**! This is a simple yet powerful Android app designed to he
 -   **Eye Protection**: A warm "Sepia" mode to make long reading sessions easier on your eyes.
 -   **Drawing & Notes**: Sketch directly on your PDF pages and save them permanently.
 -   **Text-to-Speech**: Listen to your books while you're on the go.
+-   **Smart Updates**: Check for new app releases directly from the Settings page.
+
+---
+
+## 🆙 How to Release an Update (For the Developer)
+
+To ensure the "Check for Updates" button works for your users, follow these steps every time you have a new version:
+
+1.  **Update the Version in Code**:
+    -   Open `app/build.gradle.kts` and increase `versionCode` (e.g., from `2` to `3`) and `versionName` (e.g., from `"1.0.1"` to `"1.0.2"`).
+    -   Open `SettingsPage.kt` and update `val currentVersion = "1.0.2"` (around line 249).
+2.  **Create a New GitHub Release**:
+    -   Go to **Releases** on your GitHub repo.
+    -   Click "Draft a new release."
+    -   **Important**: Set the **Tag name** to the new version (e.g., `1.0.2` or `v1.0.2`).
+    -   Upload your new `app-release.apk` and publish.
+3.  **That's it!**: The app uses the GitHub API to check the latest tag automatically. No need to update any extra text files.
 
 ---
 

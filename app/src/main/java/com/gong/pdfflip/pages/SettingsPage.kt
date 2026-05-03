@@ -9,8 +9,8 @@ package com.gong.pdfflip.pages
  * 3. App Info: Detailed version and description of PDF Flip.
  */
 /** Reminder Version Update Number when every time update
- * Code Line = 246 : val currentVersion = "1.0.1"
- * Code Line = 257 : val latestVersion = "1.0.1" // update version: Simulated result
+ * Code Line = 249 : val currentVersion = "1.0.1"
+ * In GitHub: Simply create a new "Release". The app checks the "Tag name" of the latest release.
  * even in build.gradle.kts (:app)
    - Line 18 = versionCode = 2 (increase the no. eg 3,4,5,6,7,.....)
    - Line 19 = versionName = "1.0.1"( increase the number )
@@ -246,25 +246,26 @@ fun SettingsScreen(
     // Update State
     var isCheckingUpdate by remember { mutableStateOf(false) }
     var updateMessage by remember { mutableStateOf<String?>(null) }
-    val currentVersion = "1.0.1" //version update no.
+    val currentVersion = "1.0.1" // Current App Version
 
     fun checkForUpdates() {
         isCheckingUpdate = true
         updateMessage = null
         scope.launch(Dispatchers.IO) {
             try {
-                // Example URL - Replace with your real raw version.txt link on GitHub
-                // val latestVersion = URL("https://raw.githubusercontent.com/Gongchampou/PDF-FLIP-Reader/main/version.txt").readText().trim()
+                // Fetch latest release info from GitHub API
+                val connection = URL("https://api.github.com/repos/Gongchampou/PDF-FLIP-Reader/releases/latest").openConnection()
+                connection.setRequestProperty("Accept", "application/vnd.github.v3+json")
+                val response = connection.getInputStream().bufferedReader().use { it.readText() }
                 
-                delay(2000) // Simulate network delay for effect
-                val latestVersion = "1.0.1" // update version: Simulated result
+                // Simple manual parsing of "tag_name":"v1.0.1"
+                val latestTag = response.substringAfter("\"tag_name\":\"").substringBefore("\"")
+                val latestVersion = latestTag.replace("v", "").trim()
 
                 withContext(Dispatchers.Main) {
                     isCheckingUpdate = false
-                    if (latestVersion != currentVersion) {
-                        updateMessage = "New version $latestVersion available!"
-                        // In a real app, you'd trigger a download here
-                        // uriHandler.openUri("https://github.com/Gongchampou/PDF-FLIP-Reader/releases/latest")
+                    if (latestVersion != currentVersion && latestVersion.isNotEmpty()) {
+                        updateMessage = "New Version $latestTag Available!"
                     } else {
                         Toast.makeText(context, "You are on the latest version", Toast.LENGTH_SHORT).show()
                     }
@@ -272,7 +273,7 @@ fun SettingsScreen(
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     isCheckingUpdate = false
-                    Toast.makeText(context, "Update check failed", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Update check failed. Check your internet.", Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -543,7 +544,13 @@ fun SettingsScreen(
 
                         // Update Button
                         Button(
-                            onClick = { checkForUpdates() },
+                            onClick = { 
+                                if (updateMessage != null) {
+                                    uriHandler.openUri("https://github.com/Gongchampou/PDF-FLIP-Reader/releases/latest")
+                                } else {
+                                    checkForUpdates()
+                                }
+                            },
                             modifier = Modifier.fillMaxWidth(),
                             enabled = !isCheckingUpdate,
                             colors = ButtonDefaults.buttonColors(
@@ -558,7 +565,11 @@ fun SettingsScreen(
                                 Spacer(Modifier.width(8.dp))
                                 Text("Checking...", fontSize = 14.sp)
                             } else {
-                                Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Icon(
+                                    imageVector = if (updateMessage != null) Icons.Default.CloudDownload else Icons.Default.SystemUpdate, 
+                                    contentDescription = null, 
+                                    modifier = Modifier.size(18.dp)
+                                )
                                 Spacer(Modifier.width(8.dp))
                                 Text(updateMessage ?: "Check for Updates", fontSize = 14.sp)
                             }
