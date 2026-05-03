@@ -78,6 +78,9 @@ data class Book(
     val sourceUri: String? = null // Store original file location as a string
 )
 
+enum class ImportStatus { Success, Duplicate, Error }
+data class ImportResult(val name: String, val status: ImportStatus)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(onBookClick: (Book) -> Unit, onSettingsClick: () -> Unit, titleFontSizeIndex: Int = 1) {
@@ -126,6 +129,10 @@ fun LibraryScreen(onBookClick: (Book) -> Unit, onSettingsClick: () -> Unit, titl
     var bookToDelete by remember { mutableStateOf<Book?>(null) }
     var deleteConfirmCode by remember { mutableStateOf("") }
     var userInputCode by remember { mutableStateOf("") }
+
+    // Import Summary states
+    val importResults = remember { mutableStateListOf<ImportResult>() }
+    var showImportSummary by remember { mutableStateOf(false) }
 
     val libraryBooks = remember { mutableStateListOf<Book>() }
     val recentBooks = remember { mutableStateListOf<Book>() }
@@ -283,9 +290,9 @@ fun LibraryScreen(onBookClick: (Book) -> Unit, onSettingsClick: () -> Unit, titl
         onResult = { uris: List<Uri> -> 
             if (uris.isNotEmpty()) {
                 scope.launch {
-                    var importCount = 0
-                    var lastImportedUri: Uri? = null
-                    var lastImportedName: String? = null
+                    importResults.clear()
+                    var successCount = 0
+                    var lastImportedBook: Book? = null
 
                     uris.forEach { sourceUri ->
                         try {
@@ -293,6 +300,7 @@ fun LibraryScreen(onBookClick: (Book) -> Unit, onSettingsClick: () -> Unit, titl
                             
                             // 1. FAST CHECK: Is it already on our UI list?
                             if (libraryBooks.any { it.name == fileName }) {
+                                importResults.add(ImportResult(fileName, ImportStatus.Duplicate))
                                 return@forEach
                             }
 
@@ -320,7 +328,8 @@ fun LibraryScreen(onBookClick: (Book) -> Unit, onSettingsClick: () -> Unit, titl
                             } ?: false
 
                             if (existsOnDisk) {
-                                return@forEach // Skip if physical file already exists to avoid (1).pdf mess
+                                importResults.add(ImportResult(fileName, ImportStatus.Duplicate))
+                                return@forEach
                             }
 
                             // 3. SAFE IMPORT: Only create the file if it's truly new
@@ -352,23 +361,27 @@ fun LibraryScreen(onBookClick: (Book) -> Unit, onSettingsClick: () -> Unit, titl
                                     updateRecent(newBook, 0, 0)
                                 }
                                 
-                                lastImportedUri = destUri
-                                lastImportedName = fileName
-                                importCount++
+                                importResults.add(ImportResult(fileName, ImportStatus.Success))
+                                lastImportedBook = newBook
+                                successCount++
                             }
                         } catch (e: Exception) { 
                             e.printStackTrace()
+                            importResults.add(ImportResult("Unknown File", ImportStatus.Error))
                         }
                     }
 
                     withContext(Dispatchers.Main) {
-                        if (importCount > 1) {
-                            Toast.makeText(context, "Imported $importCount files", Toast.LENGTH_SHORT).show()
-                        } else if (importCount == 1 && lastImportedUri != null) {
-                            val newBook = libraryBooks.find { it.name == lastImportedName }
-                            if (newBook != null) onBookClick(newBook)
-                        }
                         saveLibraryMetadata()
+                        
+                        // Logic:
+                        // 1. If only 1 file picked and it's success -> Open it
+                        // 2. Otherwise -> Show Summary Dialog
+                        if (uris.size == 1 && successCount == 1 && lastImportedBook != null) {
+                            onBookClick(lastImportedBook!!)
+                        } else {
+                            showImportSummary = true
+                        }
                     }
                 }
             }
@@ -882,7 +895,7 @@ fun BookGridItem(book: Book, fontSize: androidx.compose.ui.unit.TextUnit, lineHe
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(4.dp),
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
@@ -895,7 +908,36 @@ fun BookGridItem(book: Book, fontSize: androidx.compose.ui.unit.TextUnit, lineHe
                         textAlign = TextAlign.Center,
                         lineHeight = lineHeight
                     )
-                    Spacer(Modifier.height(12.dp)) // Space for progress pinned below
+                }
+
+                // Progress Indicator (Pinned to Bottom)
+                if (book.totalPages > 0) {
+                    val progress = (book.currentPage + 1).toFloat() / book.totalPages
+                    val percent = (progress * 100).toInt()
+                    
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 6.dp, end = 6.dp, bottom = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        LinearProgressIndicator(
+                            progress = { progress },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(3.dp)
+                                .clip(CircleShape),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.1f)
+                        )
+                        Text(
+                            text = "$percent%",
+                            fontSize = 7.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
+                    }
                 }
             }
 
@@ -925,37 +967,6 @@ fun BookGridItem(book: Book, fontSize: androidx.compose.ui.unit.TextUnit, lineHe
                         .background(Color.Black.copy(alpha = 0.2f), CircleShape)
                 ) {
                     Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.size(12.dp))
-                }
-            }
-
-            // Progress Indicator (Pinned to Bottom)
-            if (book.totalPages > 0) {
-                val progress = (book.currentPage + 1).toFloat() / book.totalPages
-                val percent = (progress * 100).toInt()
-                
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    LinearProgressIndicator(
-                        progress = { progress },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(2.dp)
-                            .clip(CircleShape),
-                        color = MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.1f)
-                    )
-                    Text(
-                        text = "$percent%",
-                        fontSize = 7.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                    )
                 }
             }
         }

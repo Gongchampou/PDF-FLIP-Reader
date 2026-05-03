@@ -8,6 +8,13 @@ package com.gong.pdfflip.pages
  * 2. Category Management: Rename or delete tags with professional confirmation dialogs.
  * 3. App Info: Detailed version and description of PDF Flip.
  */
+/** Reminder Version Update Number when every time update
+ * Code Line = 246 : val currentVersion = "1.0.1"
+ * Code Line = 257 : val latestVersion = "1.0.1" // update version: Simulated result
+ * even in build.gradle.kts (:app)
+   - Line 18 = versionCode = 2 (increase the no. eg 3,4,5,6,7,.....)
+   - Line 19 = versionName = "1.0.1"( increase the number )
+ */
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -168,10 +175,10 @@ fun SettingsScreen(
     if (tagToDelete != null) {
         AlertDialog(
             onDismissRequest = { tagToDelete = null; userInputTagName = "" },
-            title = { Text("confirm", fontWeight = FontWeight.Bold) },
+            title = { Text("Confirm", fontWeight = FontWeight.Bold) },
             text = {
                 Column {
-                    Text("Deleting \"${tagToDelete}\" will remove it from all books.")
+                    Text("Delete \"${tagToDelete}\" will remove it from all books tags.")
 
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -218,6 +225,7 @@ fun SettingsScreen(
                     )
                 }
             },
+            //delete funtion for tag
             confirmButton = {
                 Button(
                     onClick = { deleteTag(tagToDelete!!) },
@@ -238,7 +246,7 @@ fun SettingsScreen(
     // Update State
     var isCheckingUpdate by remember { mutableStateOf(false) }
     var updateMessage by remember { mutableStateOf<String?>(null) }
-    val currentVersion = "1.0.0"
+    val currentVersion = "1.0.1" //version update no.
 
     fun checkForUpdates() {
         isCheckingUpdate = true
@@ -249,7 +257,7 @@ fun SettingsScreen(
                 // val latestVersion = URL("https://raw.githubusercontent.com/Gongchampou/PDF-FLIP-Reader/main/version.txt").readText().trim()
                 
                 delay(2000) // Simulate network delay for effect
-                val latestVersion = "1.0.0" // Simulated result
+                val latestVersion = "1.0.1" // update version: Simulated result
 
                 withContext(Dispatchers.Main) {
                     isCheckingUpdate = false
@@ -357,15 +365,15 @@ fun SettingsScreen(
 
             // --- SECTION 1.5: READING EXPERIENCE (FLIP/SCROLL) ---
             item {
-                Spacer(Modifier.height(8.dp))
-                SettingsSectionHeader(title = "Reading Experience", icon = Icons.Default.MenuBook, tint = currentTextColor)
+                Spacer(Modifier.height(4.dp))
+                SettingsSectionHeader(title = "Read mode", icon = Icons.Default.MenuBook, tint = currentTextColor)
                 
                 Card(
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 1.dp),
                     colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.3f)),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
+                    Column(modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp, top = 2.dp)) {
                         // Page Mode Toggle
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                             Text("Default Mode", fontSize = 14.sp, color = currentTextColor)
@@ -375,7 +383,7 @@ fun SettingsScreen(
                                     onClick = { savePrefs(0, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex) },
                                     label = { Text("Flip", fontSize = 12.sp) }
                                 )
-                                Spacer(Modifier.width(8.dp))
+                                Spacer(Modifier.width(4.dp))
                                 FilterChip(
                                     selected = pageModeIndex == 1,
                                     onClick = { savePrefs(1, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex) },
@@ -384,7 +392,7 @@ fun SettingsScreen(
                             }
                         }
                         
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = currentTextColor.copy(alpha = 0.1f))
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = currentTextColor.copy(alpha = 0.1f))
                         
                         if (pageModeIndex == 0) {
                             // Flip Style
@@ -415,7 +423,7 @@ fun SettingsScreen(
                                 FilterChip(
                                     selected = scrollStyleIndex == 1,
                                     onClick = { savePrefs(pageModeIndex, flipStyleIndex, 1, titleFontSizeIndex) },
-                                    label = { Text("Smooth Flow", fontSize = 12.sp) }
+                                    label = { Text("Smooth Scroll", fontSize = 12.sp) }
                                 )
                             }
                         }
@@ -423,30 +431,29 @@ fun SettingsScreen(
                 }
             }
 
-            // --- SECTION 1.6: LIBRARY UI (FONT SIZE) ---
+            // --- SECTION 1.6: LIBRARY TITLE (FONT SIZE) ---
             item {
-                Spacer(Modifier.height(8.dp))
-                SettingsSectionHeader(title = "Library UI", icon = Icons.Default.TextFields, tint = currentTextColor)
+                Spacer(Modifier.height(4.dp))
+                SettingsSectionHeader(title = "Library Title", icon = Icons.Default.TextFields, tint = currentTextColor)
                 Card(
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 1.dp),
                     colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.3f)),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text("Book Title Font Size", fontSize = 14.sp, color = currentTextColor)
-                        Row(modifier = Modifier.padding(top = 8.dp)) {
+                    Column(modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp, top = 2.dp)) {
+                        Row {
                             FilterChip(
                                 selected = titleFontSizeIndex == 0,
                                 onClick = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, 0) },
                                 label = { Text("Small", fontSize = 12.sp) }
                             )
-                            Spacer(Modifier.width(8.dp))
+                            Spacer(Modifier.width(4.dp))
                             FilterChip(
                                 selected = titleFontSizeIndex == 1,
                                 onClick = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, 1) },
                                 label = { Text("Medium", fontSize = 12.sp) }
                             )
-                            Spacer(Modifier.width(8.dp))
+                            Spacer(Modifier.width(4.dp))
                             FilterChip(
                                 selected = titleFontSizeIndex == 2,
                                 onClick = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, 2) },
@@ -519,18 +526,20 @@ fun SettingsScreen(
 
             // --- SECTION 3: ABOUT ---
             item {
+                Spacer(Modifier.height(4.dp))
                 SettingsSectionHeader(title = "About", icon = Icons.Default.Info, tint = currentTextColor)
                 Card(
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.5f))
+                    modifier = Modifier.fillMaxWidth().padding(top = 1.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.5f)),
+                    shape = RoundedCornerShape(12.dp)
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text("PDF Flip Reader", fontWeight = FontWeight.Bold, color = currentTextColor)
-                        Text("Version $currentVersion", fontSize = 12.sp, color = Color.Gray)
-                        Spacer(Modifier.height(8.dp))
-                        Text("A professional-grade document reader designed for high performance and eye protection.", fontSize = 14.sp, color = currentTextColor.copy(alpha = 0.8f))
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        //version area
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Version $currentVersion", fontSize = 12.sp, color = Color.Gray)
+                        }
                         
-                        Spacer(Modifier.height(16.dp))
+                        Spacer(Modifier.height(4.dp))
 
                         // Update Button
                         Button(
@@ -541,8 +550,8 @@ fun SettingsScreen(
                                 containerColor = if (updateMessage != null) Color(0xFF4CAF50) else currentTextColor.copy(alpha = 0.1f),
                                 contentColor = if (updateMessage != null) Color.White else currentTextColor
                             ),
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(vertical = 12.dp)
+                            shape = RoundedCornerShape(4.dp),
+                            contentPadding = PaddingValues(vertical = 6.dp)
                         ) {
                             if (isCheckingUpdate) {
                                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = currentTextColor)
@@ -569,24 +578,23 @@ fun SettingsScreen(
 
             // --- SECTION 4: LINK & UPDATES (SOCIAL LINKS) ---
             item {
-                Spacer(Modifier.height(16.dp))
-                
                 Text("Link Update:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = currentTextColor.copy(alpha = 0.6f))
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(2.dp))
 
                 // Priority Row: Play Store & Google Drive
                 LazyRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    item {
+                    //When your Apps is the Play-store you can uncomment.
+                   /* item {
                         AssistChip(
                             onClick = { uriHandler.openUri("https://play.google.com/store/apps/details?id=com.gong.pdfflip") },
                             label = { Text("Play Store", fontSize = 11.sp) },
                             leadingIcon = { Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp)) },
                             colors = AssistChipDefaults.assistChipColors(labelColor = currentTextColor)
                         )
-                    }
+                    }*/
                     item {
                         AssistChip(
                             onClick = { uriHandler.openUri("https://drive.google.com/drive/folders/your_id") },
@@ -597,11 +605,10 @@ fun SettingsScreen(
                     }
                 }
                 
-                Spacer(Modifier.height(8.dp))
 
                 // Secondary Row: GitHub & Website
                 Text("My site:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = currentTextColor.copy(alpha = 0.6f))
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(2.dp))
                 LazyRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -622,6 +629,29 @@ fun SettingsScreen(
                             colors = AssistChipDefaults.assistChipColors(labelColor = currentTextColor)
                         )
                     }
+                }
+            }
+
+            // --- FOOTER: DEVELOPER INFO ---
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Apps is a professional document reader. Flipping the pdf to fill the book.",
+                        fontSize = 11.sp,
+                        color = currentTextColor.copy(alpha = 0.5f),
+                        textAlign = TextAlign.Start
+                    )
+                    Text(
+                        text = "Developer name Gongchampou (Jonah kamei)",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = currentTextColor.copy(alpha = 0.8f),
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(Modifier.height(8.dp))
                 }
             }
         }
