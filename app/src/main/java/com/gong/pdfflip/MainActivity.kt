@@ -9,12 +9,21 @@ package com.gong.pdfflip
  * 3. App-wide state (like which PDF is currently open).
  */
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
+import com.gong.pdfflip.components.StoragePermissionDialog
 import com.gong.pdfflip.pages.LibraryScreen
 import com.gong.pdfflip.pages.ReaderScreen
 import com.gong.pdfflip.pages.SettingsScreen
@@ -32,14 +41,44 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
+            val context = LocalContext.current
             var themeIndex by remember { mutableIntStateOf(2) }
             var pageModeIndex by remember { mutableIntStateOf(0) } // 0: Flip, 1: Scroll
             var flipStyleIndex by remember { mutableIntStateOf(0) } // 0: Normal, 1: Natural
             var scrollStyleIndex by remember { mutableIntStateOf(0) } // 0: Page, 1: Smooth
             var titleFontSizeIndex by remember { mutableIntStateOf(1) } // 0: Small, 1: Medium, 2: Large
+
+            // Permission States
+            var showPermissionDialog by remember { mutableStateOf(false) }
+            val sharedPrefs = remember { context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE) }
+            val hasSeenDisclosure = remember { mutableStateOf(sharedPrefs.getBoolean("has_seen_disclosure", false)) }
+
+            val storagePermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                // On Android 13+, we use specific media permissions or just the file picker
+                // For this app, we check for READ_MEDIA_IMAGES/VIDEO if needed, but for Documents
+                // the system file picker is preferred. We'll check READ_EXTERNAL_STORAGE for safety on <13.
+                Manifest.permission.READ_EXTERNAL_STORAGE 
+            } else {
+                Manifest.permission.READ_EXTERNAL_STORAGE
+            }
+
+            val permissionLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.RequestPermission()
+            ) { isGranted ->
+                if (isGranted) {
+                    sharedPrefs.edit().putBoolean("has_seen_disclosure", true).apply()
+                }
+                showPermissionDialog = false
+            }
             
             // Load settings on startup
             LaunchedEffect(Unit) {
+                // Check if we need to show the disclosure
+                val isPermissionGranted = ContextCompat.checkSelfPermission(context, storagePermission) == PackageManager.PERMISSION_GRANTED
+                if (!isPermissionGranted && !hasSeenDisclosure.value) {
+                    showPermissionDialog = true
+                }
+
                 val themeFile = java.io.File(filesDir, "app_theme.txt")
                 if (themeFile.exists()) themeIndex = themeFile.readText().toIntOrNull() ?: 2
                 
@@ -58,6 +97,19 @@ class MainActivity : ComponentActivity() {
             }
 
             PDFFlipTheme(themeIndex = themeIndex) {
+                if (showPermissionDialog) {
+                    StoragePermissionDialog(
+                        onConfirm = {
+                            permissionLauncher.launch(storagePermission)
+                        },
+                        onDismiss = {
+                            showPermissionDialog = false
+                            // Optional: Record that they saw it but dismissed
+                            sharedPrefs.edit().putBoolean("has_seen_disclosure", true).apply()
+                        }
+                    )
+                }
+
                 MainAppNavigation(
                     currentTheme = themeIndex,
                     onThemeChange = { themeIndex = it },

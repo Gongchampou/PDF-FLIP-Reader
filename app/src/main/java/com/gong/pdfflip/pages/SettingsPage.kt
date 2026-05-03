@@ -255,6 +255,7 @@ fun SettingsScreen(
             try {
                 // Fetch latest release info from GitHub API
                 val connection = URL("https://api.github.com/repos/Gongchampou/PDF-FLIP-Reader/releases/latest").openConnection()
+                connection.setRequestProperty("User-Agent", "PDFFlip-App") // Required by GitHub
                 connection.setRequestProperty("Accept", "application/vnd.github.v3+json")
                 val response = connection.getInputStream().bufferedReader().use { it.readText() }
                 
