@@ -17,7 +17,25 @@ Welcome to **PDFFlip**! This is a simple yet powerful Android app designed to he
 -   **Eye Protection**: A warm "Sepia" mode to make long reading sessions easier on your eyes.
 -   **Drawing & Notes**: Sketch directly on your PDF pages and save them permanently.
 -   **Text-to-Speech**: Listen to your books while you're on the go.
+-   **Reading Timer ⏱️**: A built-in timer in the reader page to track your reading sessions with Play, Pause, Stop, and Reset controls.
 -   **Smart Updates**: Check for new app releases directly from the Settings page.
+
+---
+
+## ⏱️ Reading Timer Feature (New!)
+
+We added a highly requested feature: a **Reading Timer**. This allows you to track exactly how long you spend reading each book.
+
+### How to use it:
+1.  **Enable the Timer**: Go to **Settings** -> **Reading Timer** and toggle "Show Timer in Reader" to ON.
+2.  **Reader Controls**: When you open a book, you'll see the timer at the top.
+    -   **Play (▶️)**: Start the clock.
+    -   **Pause (⏸️)**: Take a break without losing your time.
+    -   **Refresh (🔄)**: Reset the timer to 00:00:00 but keep it running.
+    -   **Stop (⏹️)**: Reset the timer and stop the clock.
+3.  **Smart Placement**: 
+    - In **Normal View**, the Timer is at the top, and the Tools (Pen/Zoom) remain at the bottom for a familiar layout.
+    - In **Full-Screen Mode**, all tools (Timer, Pen, Zoom) are consolidated into a single top line for a clean, immersive experience.
 
 ---
 

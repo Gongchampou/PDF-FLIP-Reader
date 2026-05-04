@@ -76,6 +76,7 @@ import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
@@ -105,7 +106,8 @@ fun ReaderScreen(
     flipStyleIndex: Int = 0,
     scrollStyleIndex: Int = 0,
     onBack: () -> Unit,
-    onPageModeToggle: (Int) -> Unit
+    onPageModeToggle: (Int) -> Unit,
+    showTimer: Boolean = false
 ) {
     BackHandler(onBack = onBack)
     val context = LocalContext.current
@@ -155,6 +157,26 @@ fun ReaderScreen(
     var currentSentenceIndex by remember { mutableIntStateOf(0) }
     var ttsSourcePage by remember { mutableIntStateOf(-1) }
 
+    // Timer States
+    var timerSeconds by remember { mutableIntStateOf(0) }
+    var isTimerRunning by remember { mutableStateOf(false) }
+
+    // Timer Effect
+    LaunchedEffect(isTimerRunning) {
+        if (isTimerRunning) {
+            while (true) {
+                delay(1000)
+                timerSeconds++
+            }
+        }
+    }
+
+    fun formatTime(seconds: Int): String {
+        val h = seconds / 3600
+        val m = (seconds % 3600) / 60
+        val s = seconds % 60
+        return "%02d:%02d:%02d".format(h, m, s)
+    }
     fun speakCurrentSentence(engine: TextToSpeech?, list: List<String>, index: Int) {
         if (engine != null && index in list.indices) {
             val params = Bundle()
@@ -395,8 +417,33 @@ fun ReaderScreen(
                     navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = currentTextColor) } },
                     title = {
                         Column {
-                            Text(uri.lastPathSegment ?: "Reading", fontSize = 16.sp, color = currentTextColor, fontWeight = FontWeight.Bold)
-                            if (pageCount > 0) Text("Page ${pagerState.currentPage + 1} of $pageCount", fontSize = 12.sp, color = currentTextColor.copy(alpha = 0.7f))
+                            if (showTimer) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = formatTime(timerSeconds),
+                                        fontSize = 18.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = currentTextColor
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    IconButton(onClick = { isTimerRunning = !isTimerRunning }, modifier = Modifier.size(24.dp)) {
+                                        Icon(
+                                            if (isTimerRunning) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                            contentDescription = "Timer Control",
+                                            tint = currentTextColor,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                    IconButton(onClick = { timerSeconds = 0 }, modifier = Modifier.size(24.dp)) {
+                                        Icon(Icons.Default.Refresh, "Reset", tint = currentTextColor, modifier = Modifier.size(18.dp))
+                                    }
+                                    IconButton(onClick = { isTimerRunning = false; timerSeconds = 0 }, modifier = Modifier.size(24.dp)) {
+                                        Icon(Icons.Default.Stop, "Stop", tint = Color.Red, modifier = Modifier.size(18.dp))
+                                    }
+                                }
+                            } else {
+                                Text(uri.lastPathSegment ?: "Reading", fontSize = 16.sp, color = currentTextColor, fontWeight = FontWeight.Bold)
+                            }
                         }
                     },
                     actions = {
@@ -428,8 +475,16 @@ fun ReaderScreen(
         bottomBar = {
             AnimatedVisibility(visible = !isFullScreen, enter = slideInVertically { it }, exit = slideOutVertically { it }) {
                 BottomAppBar(containerColor = currentBgColor) {
-                    ReaderToolIcon(if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder, "Bookmark", currentTextColor) { isBookmarked = !isBookmarked }
-                    ReaderToolIcon(Icons.AutoMirrored.Filled.NoteAdd, "Notes", currentTextColor) { showNoteDialog = true }
+                    if (pageCount > 0) {
+                        Text(
+                            text = "Page ${pagerState.currentPage + 1} of $pageCount",
+                            fontSize = 12.sp,
+                            color = currentTextColor,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
+                        VerticalDivider(modifier = Modifier.padding(vertical = 12.dp), color = currentTextColor.copy(alpha = 0.2f))
+                    }
                     
                     ReaderToolIcon(
                         icon = when (speechState) {
@@ -656,8 +711,28 @@ fun ReaderScreen(
                             .background(Color.Black.copy(alpha = 0.3f), CircleShape)
                             .padding(horizontal = 8.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        if (showTimer) {
+                            Text(
+                                text = formatTime(timerSeconds),
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            IconButton(onClick = { isTimerRunning = !isTimerRunning }, modifier = Modifier.size(24.dp)) {
+                                Icon(
+                                    if (isTimerRunning) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = "Timer Control",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            IconButton(onClick = { timerSeconds = 0 }, modifier = Modifier.size(24.dp)) {
+                                Icon(Icons.Default.Refresh, "Reset", tint = Color.White, modifier = Modifier.size(18.dp))
+                            }
+                        }
+
                         // Drawing Toggle
                         ReaderToolIcon(if (isDrawingMode) Icons.Default.EditOff else Icons.Default.Edit, "Draw", Color.White) { 
                             isDrawingMode = !isDrawingMode 
@@ -749,6 +824,20 @@ fun ReaderScreen(
                         colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.Black.copy(alpha = 0.5f))
                     ) {
                         Icon(Icons.Default.FullscreenExit, "Exit", tint = Color.White)
+                    }
+
+                    // Page Number (Bottom Most)
+                    if (pageCount > 0) {
+                        Text(
+                            text = "Page ${pagerState.currentPage + 1} of $pageCount",
+                            fontSize = 12.sp,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .background(Color.Black.copy(alpha = 0.3f), CircleShape)
+                                .padding(horizontal = 12.dp, vertical = 4.dp)
+                        )
                     }
                 }
             }

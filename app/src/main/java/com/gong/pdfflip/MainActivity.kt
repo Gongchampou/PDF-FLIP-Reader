@@ -47,6 +47,7 @@ class MainActivity : ComponentActivity() {
             var flipStyleIndex by remember { mutableIntStateOf(0) } // 0: Normal, 1: Natural
             var scrollStyleIndex by remember { mutableIntStateOf(0) } // 0: Page, 1: Smooth
             var titleFontSizeIndex by remember { mutableIntStateOf(1) } // 0: Small, 1: Medium, 2: Large
+            var showTimer by remember { mutableStateOf(false) }
 
             // Permission States
             var showPermissionDialog by remember { mutableStateOf(false) }
@@ -93,6 +94,9 @@ class MainActivity : ComponentActivity() {
                     if (parts.size >= 4) {
                         titleFontSizeIndex = parts[3].toIntOrNull() ?: 1
                     }
+                    if (parts.size >= 5) {
+                        showTimer = parts[4] == "1"
+                    }
                 }
             }
 
@@ -117,14 +121,16 @@ class MainActivity : ComponentActivity() {
                     flipStyleIndex = flipStyleIndex,
                     scrollStyleIndex = scrollStyleIndex,
                     titleFontSizeIndex = titleFontSizeIndex,
-                    onPrefsChange = { mode, flip, scroll, font ->
+                    showTimer = showTimer,
+                    onPrefsChange = { mode, flip, scroll, font, timer ->
                         pageModeIndex = mode
                         flipStyleIndex = flip
                         scrollStyleIndex = scroll
                         titleFontSizeIndex = font
+                        showTimer = timer
                         // Save to storage
                         val prefsFile = java.io.File(filesDir, "reader_prefs.txt")
-                        prefsFile.writeText("$mode|$flip|$scroll|$font")
+                        prefsFile.writeText("$mode|$flip|$scroll|$font|${if (timer) "1" else "0"}")
                     }
                 )
             }
@@ -140,7 +146,8 @@ fun MainAppNavigation(
     flipStyleIndex: Int,
     scrollStyleIndex: Int,
     titleFontSizeIndex: Int,
-    onPrefsChange: (Int, Int, Int, Int) -> Unit
+    showTimer: Boolean,
+    onPrefsChange: (Int, Int, Int, Int, Boolean) -> Unit
 ) {
     // Current screen state
     var currentScreen by remember { mutableStateOf(Screen.Library) }
@@ -178,10 +185,11 @@ fun MainAppNavigation(
                     scrollStyleIndex = scrollStyleIndex,
                     onBack = { currentScreen = Screen.Library },
                     onPageModeToggle = { newMode -> 
-                        onPrefsChange(newMode, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex)
+                        onPrefsChange(newMode, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, showTimer)
                         // Save immediately
                         // (We'll handle save logic in a helper or passed lambda)
-                    }
+                    },
+                    showTimer = showTimer
                 )
             }
         }
@@ -193,6 +201,7 @@ fun MainAppNavigation(
                 flipStyleIndex = flipStyleIndex,
                 scrollStyleIndex = scrollStyleIndex,
                 titleFontSizeIndex = titleFontSizeIndex,
+                showTimer = showTimer,
                 onPrefsChanged = onPrefsChange
             )
         }

@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -74,7 +75,8 @@ fun SettingsScreen(
     flipStyleIndex: Int,
     scrollStyleIndex: Int,
     titleFontSizeIndex: Int,
-    onPrefsChanged: (Int, Int, Int, Int) -> Unit
+    showTimer: Boolean,
+    onPrefsChanged: (Int, Int, Int, Int, Boolean) -> Unit
 ) {
     BackHandler(onBack = onBack)
     val context = LocalContext.current
@@ -83,11 +85,11 @@ fun SettingsScreen(
     val uriHandler = LocalUriHandler.current
 
     // Preference saving helper
-    fun savePrefs(mode: Int, flip: Int, scroll: Int, font: Int) {
-        onPrefsChanged(mode, flip, scroll, font)
+    fun savePrefs(mode: Int, flip: Int, scroll: Int, font: Int, timer: Boolean) {
+        onPrefsChanged(mode, flip, scroll, font, timer)
         scope.launch(Dispatchers.IO) {
             val prefsFile = File(context.filesDir, "reader_prefs.txt")
-            prefsFile.writeText("$mode|$flip|$scroll|$font")
+            prefsFile.writeText("$mode|$flip|$scroll|$font|${if (timer) "1" else "0"}")
         }
     }
     
@@ -382,13 +384,13 @@ fun SettingsScreen(
                             Row {
                                 FilterChip(
                                     selected = pageModeIndex == 0,
-                                    onClick = { savePrefs(0, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex) },
+                                    onClick = { savePrefs(0, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, showTimer) },
                                     label = { Text("Flip", fontSize = 12.sp) }
                                 )
                                 Spacer(Modifier.width(4.dp))
                                 FilterChip(
                                     selected = pageModeIndex == 1,
-                                    onClick = { savePrefs(1, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex) },
+                                    onClick = { savePrefs(1, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, showTimer) },
                                     label = { Text("Scroll", fontSize = 12.sp) }
                                 )
                             }
@@ -402,13 +404,13 @@ fun SettingsScreen(
                             Row(modifier = Modifier.padding(top = 4.dp)) {
                                 FilterChip(
                                     selected = flipStyleIndex == 0,
-                                    onClick = { savePrefs(pageModeIndex, 0, scrollStyleIndex, titleFontSizeIndex) },
+                                    onClick = { savePrefs(pageModeIndex, 0, scrollStyleIndex, titleFontSizeIndex, showTimer) },
                                     label = { Text("Normal", fontSize = 12.sp) }
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 FilterChip(
                                     selected = flipStyleIndex == 1,
-                                    onClick = { savePrefs(pageModeIndex, 1, scrollStyleIndex, titleFontSizeIndex) },
+                                    onClick = { savePrefs(pageModeIndex, 1, scrollStyleIndex, titleFontSizeIndex, showTimer) },
                                     label = { Text("Natural Paper", fontSize = 12.sp) }
                                 )
                             }
@@ -418,13 +420,13 @@ fun SettingsScreen(
                             Row(modifier = Modifier.padding(top = 4.dp)) {
                                 FilterChip(
                                     selected = scrollStyleIndex == 0,
-                                    onClick = { savePrefs(pageModeIndex, flipStyleIndex, 0, titleFontSizeIndex) },
+                                    onClick = { savePrefs(pageModeIndex, flipStyleIndex, 0, titleFontSizeIndex, showTimer) },
                                     label = { Text("Page Snap", fontSize = 12.sp) }
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 FilterChip(
                                     selected = scrollStyleIndex == 1,
-                                    onClick = { savePrefs(pageModeIndex, flipStyleIndex, 1, titleFontSizeIndex) },
+                                    onClick = { savePrefs(pageModeIndex, flipStyleIndex, 1, titleFontSizeIndex, showTimer) },
                                     label = { Text("Smooth Scroll", fontSize = 12.sp) }
                                 )
                             }
@@ -446,19 +448,19 @@ fun SettingsScreen(
                         Row {
                             FilterChip(
                                 selected = titleFontSizeIndex == 0,
-                                onClick = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, 0) },
+                                onClick = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, 0, showTimer) },
                                 label = { Text("Small", fontSize = 12.sp) }
                             )
                             Spacer(Modifier.width(4.dp))
                             FilterChip(
                                 selected = titleFontSizeIndex == 1,
-                                onClick = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, 1) },
+                                onClick = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, 1, showTimer) },
                                 label = { Text("Medium", fontSize = 12.sp) }
                             )
                             Spacer(Modifier.width(4.dp))
                             FilterChip(
                                 selected = titleFontSizeIndex == 2,
-                                onClick = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, 2) },
+                                onClick = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, 2, showTimer) },
                                 label = { Text("Large", fontSize = 12.sp) }
                             )
                         }
@@ -466,7 +468,28 @@ fun SettingsScreen(
                 }
             }
 
-            // --- SECTION 2: TAG MANAGEMENT (DELETE TAGS) ---
+            // --- SECTION 1.7: READING TIMER ---
+            item {
+                Spacer(Modifier.height(4.dp))
+                SettingsSectionHeader(title = "Reading Timer", icon = Icons.Default.Timer, tint = currentTextColor)
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(top = 1.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.3f)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp).fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Show Timer in Reader", fontSize = 14.sp, color = currentTextColor)
+                        Switch(
+                            checked = showTimer,
+                            onCheckedChange = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, it) }
+                        )
+                    }
+                }
+            }
             item {
                 SettingsSectionHeader(title = "Manage (Tags)", icon = Icons.Default.Tag, tint = currentTextColor)
             }
