@@ -16,11 +16,13 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import com.gong.pdfflip.components.StoragePermissionDialog
@@ -156,10 +158,18 @@ fun MainAppNavigation(
     var selectedBookName by remember { mutableStateOf<String?>(null) }
     var startPage by remember { mutableIntStateOf(0) }
     var sourceUriStr by remember { mutableStateOf<String?>(null) }
+    var currentPath by rememberSaveable { mutableStateOf("/") }
+
+    // Intercept back button to return to Library from Reader or Settings
+    BackHandler(enabled = currentScreen != Screen.Library) {
+        currentScreen = Screen.Library
+    }
 
     when (currentScreen) {
         Screen.Library -> {
             LibraryScreen(
+                initialPath = currentPath,
+                onPathChange = { currentPath = it },
                 onBookClick = { book ->
                     selectedUri = book.uri
                     selectedBookName = book.name

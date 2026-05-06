@@ -66,7 +66,6 @@ fun StoragePermissionDialog(
                     Column(Modifier.padding(12.dp)) {
                         Text(
                             "• We only scan for PDF files.\n" +
-                            "• We save your notes and bookmarks locally.\n" +
                             "• Your files are never uploaded or shared.",
                             fontSize = 12.sp,
                             lineHeight = 18.sp,
