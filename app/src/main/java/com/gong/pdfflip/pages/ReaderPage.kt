@@ -58,6 +58,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -985,12 +986,13 @@ fun DrawingCanvas(strokes: SnapshotStateList<DrawingStroke>, redoList: SnapshotS
             detectDragGestures(
                 onDragStart = { offset -> 
                     currentPoints.add(offset)
-                    redoList.clear() // Clear redo stack when new drawing starts
+                    redoList.clear() 
                 },
-                onDrag = { change, _ -> currentPoints.add(change.position) },
+                onDrag = { change, _ -> 
+                    currentPoints.add(change.position) 
+                },
                 onDragEnd = { 
                     if (canvasSize.width > 0 && canvasSize.height > 0) {
-                        // Normalize points to 0f..1f range based on canvas size
                         val normalized = currentPoints.map { Offset(it.x / canvasSize.width, it.y / canvasSize.height) }
                         strokes.add(DrawingStroke(normalized, selectedColor))
                     }
@@ -1008,7 +1010,7 @@ fun DrawingCanvas(strokes: SnapshotStateList<DrawingStroke>, redoList: SnapshotS
                     stroke.points.forEach { lineTo(it.x * size.width, it.y * size.height) }
                 }
             }
-            drawPath(path, stroke.color, style = Stroke(5f, cap = StrokeCap.Round))
+            drawPath(path, stroke.color, style = Stroke(width = 5f, cap = StrokeCap.Round, join = StrokeJoin.Round))
         }
         
         // Draw current stroke
@@ -1017,7 +1019,7 @@ fun DrawingCanvas(strokes: SnapshotStateList<DrawingStroke>, redoList: SnapshotS
                 moveTo(currentPoints.first().x, currentPoints.first().y)
                 currentPoints.forEach { lineTo(it.x, it.y) }
             }
-            drawPath(path, selectedColor, style = Stroke(5f, cap = StrokeCap.Round))
+            drawPath(path, selectedColor, style = Stroke(width = 5f, cap = StrokeCap.Round, join = StrokeJoin.Round))
         }
     }
 }
@@ -1096,7 +1098,7 @@ fun PdfPageItem(renderer: PdfRenderer?, pageIndex: Int, isFullScreen: Boolean, i
                     bitmap = it.asImageBitmap(), 
                     contentDescription = "Page", 
                     modifier = Modifier.fillMaxSize(), 
-                    contentScale = ContentScale.Fit,
+                    contentScale = ContentScale.FillBounds,
                     colorFilter = if (isEyeProtection) ColorFilter.tint(Color(0xFFF4ECD8), BlendMode.Multiply) else null
                 ) 
             } ?: CircularProgressIndicator(color = MaterialTheme.colorScheme.onBackground)
