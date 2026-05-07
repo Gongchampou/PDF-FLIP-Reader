@@ -108,7 +108,9 @@ fun ReaderScreen(
     scrollStyleIndex: Int = 0,
     onBack: () -> Unit,
     onPageModeToggle: (Int) -> Unit,
-    showTimer: Boolean = false
+    showTimer: Boolean = false,
+    showAiTool: Boolean = false,
+    aiApiKey: String = ""
 ) {
     BackHandler(onBack = onBack)
     val context = LocalContext.current
@@ -124,6 +126,10 @@ fun ReaderScreen(
     var showNoteDialog by remember { mutableStateOf(false) }
     var isBookmarked by remember { mutableStateOf(false) }
     var isDrawingMode by remember { mutableStateOf(false) }
+    var isAiMode by remember { mutableStateOf(false) }
+    var aiExplanation by remember { mutableStateOf<String?>(null) }
+    var isAiAnalyzing by remember { mutableStateOf(false) }
+
     var selectedPenColor by remember { mutableStateOf(Color.Red) }
     var showColorPicker by remember { mutableStateOf(false) }
     var showDiscardDialog by remember { mutableStateOf(false) }
@@ -504,6 +510,23 @@ fun ReaderScreen(
                         }
                     }
 
+                    // --- AI TOOL ---
+                    if (showAiTool) {
+                        ReaderToolIcon(
+                            icon = Icons.Default.AutoAwesome, 
+                            description = "AI Explain", 
+                            tint = if (isAiMode) Color(0xFF6200EE) else currentTextColor
+                        ) { 
+                            if (aiApiKey.isBlank()) {
+                                Toast.makeText(context, "Please set your Gemini API key in Settings", Toast.LENGTH_LONG).show()
+                            } else {
+                                isAiMode = !isAiMode
+                                isDrawingMode = false // Mutually exclusive
+                                isZoomMode = false
+                            }
+                        }
+                    }
+
                     // --- DRAW & SAVE TOOLS ---
                     ReaderToolIcon(if (isDrawingMode) Icons.Default.EditOff else Icons.Default.Edit, "Draw", currentTextColor) { isDrawingMode = !isDrawingMode }
                     
@@ -627,6 +650,18 @@ fun ReaderScreen(
                                 onTransform = { zoom: Float, pan: Offset ->
                                     targetScale = (targetScale * zoom).coerceIn(1f, 3.5f)
                                     if (targetScale > 1f) targetOffset += pan else targetOffset = Offset.Zero
+                                },
+                                isAiMode = isAiMode,
+                                onAiSelect = { bitmap, path -> 
+                                    performAiAnalysis(
+                                        apiKey = aiApiKey,
+                                        pageBitmap = bitmap,
+                                        circlePath = path,
+                                        onStart = { isAiAnalyzing = true; isAiMode = false },
+                                        onResult = { aiExplanation = it; isAiAnalyzing = false },
+                                        onError = { Toast.makeText(context, it, Toast.LENGTH_SHORT).show(); isAiAnalyzing = false },
+                                        scope = scope
+                                    )
                                 }
                             )
                         }
@@ -660,6 +695,18 @@ fun ReaderScreen(
                                         onTransform = { zoom: Float, pan: Offset ->
                                             targetScale = (targetScale * zoom).coerceIn(1f, 3.5f)
                                             if (targetScale > 1f) targetOffset += pan else targetOffset = Offset.Zero
+                                        },
+                                        isAiMode = isAiMode,
+                                        onAiSelect = { bitmap, path -> 
+                                            performAiAnalysis(
+                                                apiKey = aiApiKey,
+                                                pageBitmap = bitmap,
+                                                circlePath = path,
+                                                onStart = { isAiAnalyzing = true; isAiMode = false },
+                                                onResult = { aiExplanation = it; isAiAnalyzing = false },
+                                                onError = { Toast.makeText(context, it, Toast.LENGTH_SHORT).show(); isAiAnalyzing = false },
+                                                scope = scope
+                                            )
                                         }
                                     )
                                 }
@@ -694,6 +741,18 @@ fun ReaderScreen(
                                 onTransform = { zoom: Float, pan: Offset ->
                                     targetScale = (targetScale * zoom).coerceIn(1f, 3.5f)
                                     if (targetScale > 1f) targetOffset += pan else targetOffset = Offset.Zero
+                                },
+                                isAiMode = isAiMode,
+                                onAiSelect = { bitmap, path -> 
+                                    performAiAnalysis(
+                                        apiKey = aiApiKey,
+                                        pageBitmap = bitmap,
+                                        circlePath = path,
+                                        onStart = { isAiAnalyzing = true; isAiMode = false },
+                                        onResult = { aiExplanation = it; isAiAnalyzing = false },
+                                        onError = { Toast.makeText(context, it, Toast.LENGTH_SHORT).show(); isAiAnalyzing = false },
+                                        scope = scope
+                                    )
                                 }
                             )
                         }
@@ -816,6 +875,23 @@ fun ReaderScreen(
                                 targetOffset = Offset.Zero
                             }
                         }
+                        
+                        // AI Tool Toggle in Full Screen
+                        if (showAiTool) {
+                            ReaderToolIcon(
+                                icon = Icons.Default.AutoAwesome, 
+                                description = "AI Explain", 
+                                tint = if (isAiMode) Color.Cyan else Color.White
+                            ) { 
+                                if (aiApiKey.isBlank()) {
+                                    Toast.makeText(context, "Please set Gemini API key in Settings", Toast.LENGTH_LONG).show()
+                                } else {
+                                    isAiMode = !isAiMode
+                                    isDrawingMode = false
+                                    isZoomMode = false
+                                }
+                            }
+                        }
                     }
 
                     // Exit Full Screen Button (Top Right)
@@ -921,6 +997,13 @@ fun ReaderScreen(
             }
         }
     }
+
+    AiExplanationOverlay(
+        explanation = aiExplanation,
+        isAnalyzing = isAiAnalyzing,
+        onDismiss = { aiExplanation = null },
+        currentTextColor = currentTextColor
+    )
     
     if (showSearch) {
         var pageInput by remember { mutableStateOf("") }
@@ -1039,16 +1122,19 @@ fun ReaderPageContent(
     offset: Offset,
     pageStrokes: androidx.compose.runtime.snapshots.SnapshotStateMap<Int, SnapshotStateList<DrawingStroke>>,
     redoStrokes: androidx.compose.runtime.snapshots.SnapshotStateMap<Int, SnapshotStateList<DrawingStroke>>,
-    onTransform: (Float, Offset) -> Unit
+    onTransform: (Float, Offset) -> Unit,
+    isAiMode: Boolean,
+    onAiSelect: (Bitmap, List<Offset>) -> Unit
 ) {
     val strokes = pageStrokes.getOrPut(pageIndex) { mutableStateListOf<DrawingStroke>() }
     val redos = redoStrokes.getOrPut(pageIndex) { mutableStateListOf<DrawingStroke>() }
+    var pageBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .pointerInput(isDrawingMode, isZoomMode, targetScale) {
-                if (!isDrawingMode && isZoomMode) {
+            .pointerInput(isDrawingMode, isZoomMode, targetScale, isAiMode) {
+                if (!isDrawingMode && !isAiMode && isZoomMode) {
                     detectTransformGestures { _, pan, zoom, _ ->
                         onTransform(zoom, pan)
                     }
@@ -1061,15 +1147,24 @@ fun ReaderPageContent(
                 translationY = offset.y
             )
     ) {
-        PdfPageItem(pdfRenderer, pageIndex, isFullScreen, isEyeProtectionActive)
+        PdfPageItem(pdfRenderer, pageIndex, isFullScreen, isEyeProtectionActive) { bitmap ->
+            pageBitmap = bitmap
+        }
+        
         if (isDrawingMode) {
             DrawingCanvas(strokes, redos, selectedPenColor, Modifier.fillMaxSize())
+        }
+
+        if (isAiMode) {
+            AiCanvas(Modifier.fillMaxSize()) { path ->
+                pageBitmap?.let { onAiSelect(it, path) }
+            }
         }
     }
 }
 
 @Composable
-fun PdfPageItem(renderer: PdfRenderer?, pageIndex: Int, isFullScreen: Boolean, isEyeProtection: Boolean) {
+fun PdfPageItem(renderer: PdfRenderer?, pageIndex: Int, isFullScreen: Boolean, isEyeProtection: Boolean, onBitmapReady: (Bitmap) -> Unit = {}) {
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(pageIndex, renderer) {
         if (renderer != null) {
@@ -1079,6 +1174,7 @@ fun PdfPageItem(renderer: PdfRenderer?, pageIndex: Int, isFullScreen: Boolean, i
                     val b = Bitmap.createBitmap(page.width * 2, page.height * 2, Bitmap.Config.ARGB_8888)
                     page.render(b, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                     bitmap = b
+                    onBitmapReady(b)
                     page.close()
                 } catch (e: Exception) { e.printStackTrace() }
             }

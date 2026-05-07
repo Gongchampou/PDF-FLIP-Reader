@@ -50,6 +50,8 @@ class MainActivity : ComponentActivity() {
             var scrollStyleIndex by remember { mutableIntStateOf(0) } // 0: Page, 1: Smooth
             var titleFontSizeIndex by remember { mutableIntStateOf(1) } // 0: Small, 1: Medium, 2: Large
             var showTimer by remember { mutableStateOf(false) }
+            var showAiTool by remember { mutableStateOf(false) }
+            var aiApiKey by remember { mutableStateOf("") }
 
             // Permission States
             var showPermissionDialog by remember { mutableStateOf(false) }
@@ -99,6 +101,12 @@ class MainActivity : ComponentActivity() {
                     if (parts.size >= 5) {
                         showTimer = parts[4] == "1"
                     }
+                    if (parts.size >= 6) {
+                        showAiTool = parts[5] == "1"
+                    }
+                    if (parts.size >= 7) {
+                        aiApiKey = parts[6]
+                    }
                 }
             }
 
@@ -124,15 +132,19 @@ class MainActivity : ComponentActivity() {
                     scrollStyleIndex = scrollStyleIndex,
                     titleFontSizeIndex = titleFontSizeIndex,
                     showTimer = showTimer,
-                    onPrefsChange = { mode, flip, scroll, font, timer ->
+                    showAiTool = showAiTool,
+                    aiApiKey = aiApiKey,
+                    onPrefsChange = { mode, flip, scroll, font, timer, ai, key ->
                         pageModeIndex = mode
                         flipStyleIndex = flip
                         scrollStyleIndex = scroll
                         titleFontSizeIndex = font
                         showTimer = timer
+                        showAiTool = ai
+                        aiApiKey = key
                         // Save to storage
                         val prefsFile = java.io.File(filesDir, "reader_prefs.txt")
-                        prefsFile.writeText("$mode|$flip|$scroll|$font|${if (timer) "1" else "0"}")
+                        prefsFile.writeText("$mode|$flip|$scroll|$font|${if (timer) "1" else "0"}|${if (ai) "1" else "0"}|$key")
                     }
                 )
             }
@@ -149,7 +161,9 @@ fun MainAppNavigation(
     scrollStyleIndex: Int,
     titleFontSizeIndex: Int,
     showTimer: Boolean,
-    onPrefsChange: (Int, Int, Int, Int, Boolean) -> Unit
+    showAiTool: Boolean,
+    aiApiKey: String,
+    onPrefsChange: (Int, Int, Int, Int, Boolean, Boolean, String) -> Unit
 ) {
     // Current screen state
     var currentScreen by remember { mutableStateOf(Screen.Library) }
@@ -195,11 +209,11 @@ fun MainAppNavigation(
                     scrollStyleIndex = scrollStyleIndex,
                     onBack = { currentScreen = Screen.Library },
                     onPageModeToggle = { newMode -> 
-                        onPrefsChange(newMode, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, showTimer)
-                        // Save immediately
-                        // (We'll handle save logic in a helper or passed lambda)
+                        onPrefsChange(newMode, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, showTimer, showAiTool, aiApiKey)
                     },
-                    showTimer = showTimer
+                    showTimer = showTimer,
+                    showAiTool = showAiTool,
+                    aiApiKey = aiApiKey
                 )
             }
         }
@@ -212,6 +226,8 @@ fun MainAppNavigation(
                 scrollStyleIndex = scrollStyleIndex,
                 titleFontSizeIndex = titleFontSizeIndex,
                 showTimer = showTimer,
+                showAiTool = showAiTool,
+                aiApiKey = aiApiKey,
                 onPrefsChanged = onPrefsChange
             )
         }

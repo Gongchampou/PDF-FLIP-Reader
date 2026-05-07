@@ -66,6 +66,13 @@ import java.net.URL
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
@@ -76,7 +83,9 @@ fun SettingsScreen(
     scrollStyleIndex: Int,
     titleFontSizeIndex: Int,
     showTimer: Boolean,
-    onPrefsChanged: (Int, Int, Int, Int, Boolean) -> Unit
+    showAiTool: Boolean,
+    aiApiKey: String,
+    onPrefsChanged: (Int, Int, Int, Int, Boolean, Boolean, String) -> Unit
 ) {
     BackHandler(onBack = onBack)
     val context = LocalContext.current
@@ -85,11 +94,11 @@ fun SettingsScreen(
     val uriHandler = LocalUriHandler.current
 
     // Preference saving helper
-    fun savePrefs(mode: Int, flip: Int, scroll: Int, font: Int, timer: Boolean) {
-        onPrefsChanged(mode, flip, scroll, font, timer)
+    fun savePrefs(mode: Int, flip: Int, scroll: Int, font: Int, timer: Boolean, ai: Boolean, key: String) {
+        onPrefsChanged(mode, flip, scroll, font, timer, ai, key)
         scope.launch(Dispatchers.IO) {
             val prefsFile = File(context.filesDir, "reader_prefs.txt")
-            prefsFile.writeText("$mode|$flip|$scroll|$font|${if (timer) "1" else "0"}")
+            prefsFile.writeText("$mode|$flip|$scroll|$font|${if (timer) "1" else "0"}|${if (ai) "1" else "0"}|$key")
         }
     }
     
@@ -384,13 +393,13 @@ fun SettingsScreen(
                             Row {
                                 FilterChip(
                                     selected = pageModeIndex == 0,
-                                    onClick = { savePrefs(0, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, showTimer) },
+                                    onClick = { savePrefs(0, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, showTimer, showAiTool, aiApiKey) },
                                     label = { Text("Flip", fontSize = 12.sp) }
                                 )
                                 Spacer(Modifier.width(4.dp))
                                 FilterChip(
                                     selected = pageModeIndex == 1,
-                                    onClick = { savePrefs(1, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, showTimer) },
+                                    onClick = { savePrefs(1, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, showTimer, showAiTool, aiApiKey) },
                                     label = { Text("Scroll", fontSize = 12.sp) }
                                 )
                             }
@@ -404,13 +413,13 @@ fun SettingsScreen(
                             Row(modifier = Modifier.padding(top = 4.dp)) {
                                 FilterChip(
                                     selected = flipStyleIndex == 0,
-                                    onClick = { savePrefs(pageModeIndex, 0, scrollStyleIndex, titleFontSizeIndex, showTimer) },
+                                    onClick = { savePrefs(pageModeIndex, 0, scrollStyleIndex, titleFontSizeIndex, showTimer, showAiTool, aiApiKey) },
                                     label = { Text("Normal", fontSize = 12.sp) }
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 FilterChip(
                                     selected = flipStyleIndex == 1,
-                                    onClick = { savePrefs(pageModeIndex, 1, scrollStyleIndex, titleFontSizeIndex, showTimer) },
+                                    onClick = { savePrefs(pageModeIndex, 1, scrollStyleIndex, titleFontSizeIndex, showTimer, showAiTool, aiApiKey) },
                                     label = { Text("Natural Paper", fontSize = 12.sp) }
                                 )
                             }
@@ -420,13 +429,13 @@ fun SettingsScreen(
                             Row(modifier = Modifier.padding(top = 4.dp)) {
                                 FilterChip(
                                     selected = scrollStyleIndex == 0,
-                                    onClick = { savePrefs(pageModeIndex, flipStyleIndex, 0, titleFontSizeIndex, showTimer) },
+                                    onClick = { savePrefs(pageModeIndex, flipStyleIndex, 0, titleFontSizeIndex, showTimer, showAiTool, aiApiKey) },
                                     label = { Text("Page Snap", fontSize = 12.sp) }
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 FilterChip(
                                     selected = scrollStyleIndex == 1,
-                                    onClick = { savePrefs(pageModeIndex, flipStyleIndex, 1, titleFontSizeIndex, showTimer) },
+                                    onClick = { savePrefs(pageModeIndex, flipStyleIndex, 1, titleFontSizeIndex, showTimer, showAiTool, aiApiKey) },
                                     label = { Text("Smooth Scroll", fontSize = 12.sp) }
                                 )
                             }
@@ -448,19 +457,19 @@ fun SettingsScreen(
                         Row {
                             FilterChip(
                                 selected = titleFontSizeIndex == 0,
-                                onClick = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, 0, showTimer) },
+                                onClick = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, 0, showTimer, showAiTool, aiApiKey) },
                                 label = { Text("Small", fontSize = 12.sp) }
                             )
                             Spacer(Modifier.width(4.dp))
                             FilterChip(
                                 selected = titleFontSizeIndex == 1,
-                                onClick = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, 1, showTimer) },
+                                onClick = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, 1, showTimer, showAiTool, aiApiKey) },
                                 label = { Text("Medium", fontSize = 12.sp) }
                             )
                             Spacer(Modifier.width(4.dp))
                             FilterChip(
                                 selected = titleFontSizeIndex == 2,
-                                onClick = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, 2, showTimer) },
+                                onClick = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, 2, showTimer, showAiTool, aiApiKey) },
                                 label = { Text("Large", fontSize = 12.sp) }
                             )
                         }
@@ -485,7 +494,7 @@ fun SettingsScreen(
                         Text("Show Timer in Reader", fontSize = 14.sp, color = currentTextColor)
                         Switch(
                             checked = showTimer,
-                            onCheckedChange = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, it) }
+                            onCheckedChange = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, it, showAiTool, aiApiKey) }
                         )
                     }
                 }
@@ -549,7 +558,61 @@ fun SettingsScreen(
                 }
             }
 
-            // --- SECTION 3: ABOUT ---
+            // --- SECTION 3: AI ASSISTANT ---
+            item {
+                Spacer(Modifier.height(16.dp))
+                SettingsSectionHeader(title = "AI Assistant", icon = Icons.Default.AutoAwesome, tint = currentTextColor)
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.5f)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Show AI", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = currentTextColor)
+                                Text("Add an AI button to the Reader for page analysis", fontSize = 12.sp, color = Color.Gray)
+                            }
+                            Switch(
+                                checked = showAiTool,
+                                onCheckedChange = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, showTimer, it, aiApiKey) }
+                            )
+                        }
+
+                        Spacer(Modifier.height(16.dp))
+
+                        var showKey by remember { mutableStateOf(false) }
+                        OutlinedTextField(
+                            value = aiApiKey,
+                            onValueChange = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, showTimer, showAiTool, it) },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Google AI API Key") },
+                            placeholder = { Text("Enter your Gemini API key") },
+                            leadingIcon = { Icon(Icons.Default.Key, contentDescription = null) },
+                            trailingIcon = {
+                                IconButton(onClick = { showKey = !showKey }) {
+                                    Icon(if (showKey) Icons.Default.Visibility else Icons.Default.VisibilityOff, "Toggle Key Visibility")
+                                }
+                            },
+                            visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                            singleLine = true,
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        Text(
+                            text = "Get your API key from Google AI Studio. The key is stored locally and never shared.",
+                            fontSize = 11.sp,
+                            color = Color.Gray,
+                            modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                        )
+                    }
+                }
+            }
+
+            // --- SECTION 4: ABOUT ---
             item {
                 Spacer(Modifier.height(4.dp))
                 SettingsSectionHeader(title = "About", icon = Icons.Default.Info, tint = currentTextColor)

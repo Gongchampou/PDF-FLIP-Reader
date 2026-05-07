@@ -14,6 +14,7 @@ Welcome to **PDFFlip**! This app is your digital bookshelf. It helps you keep yo
 -   **Two Ways to Read**: 
     -   **Flip**: Swiping left/right like a real book.
     -   **Scroll**: Sliding up/down like a social media feed.
+-   **AI Assistant 🤖**: Circle any part of a page and let AI explain it to you instantly!
 -   **Reading Timer ⏱️**: Keep track of how long you've been focused on your book.
 
 ---
@@ -32,12 +33,18 @@ The app creates a special folder on your phone so you can easily find your books
 If you are new to coding, looking at hundreds of lines can be scary. Think of the app like a house:
 
 ### 🏠 The Architecture (File Sizes)
-- **`MainActivity.kt`** (197 lines): The **Front Door**. This is the first thing that runs. It decides which room (page) you are in.
+- **`MainActivity.kt`** (237 lines): The **Front Door**. This is the first thing that runs. It decides which room (page) you are in. It also manages your global settings like your **AI API Key**.
 - **`LibraryPage.kt`** (1119 lines): The **Bookshelf**. It manages all your files, tags, and folders.
-- **`ReaderPage.kt`** (1056 lines): The **Reading Chair**. It handles the hard work of turning a PDF file into a picture you can read.
-- **`SettingsPage.kt`** (678 lines): The **Control Panel**. Where you change the lights (theme) and app behavior.
+- **`ReaderPage.kt`** (1158 lines): The **Reading Chair**. It handles the hard work of turning a PDF file into a picture you can read. It now includes the **AI "Circle to Explain"** tool.
+- **`SettingsPage.kt`** (740 lines): The **Control Panel**. Where you change the lights (theme) and app behavior. This is where you enter your Google AI Studio key to unlock the AI features.
 
 ### 🔍 Deep Dive into the Code
+
+#### 1. The AI Integration (New!) 🤖
+- **ReaderPage.kt (Line 115)**: **`explainCircle()`** is the brain of the AI feature. It takes the area you circled, crops it into a small image, and sends it to Google's **Gemini AI**.
+- **ReaderPage.kt (Line 1105)**: **`AiCanvas`** is a special "see-through" layer. When you use the AI tool, it watches where you circle on the screen.
+- **SettingsPage.kt (Line 350)**: This is where we handle the **API Key** input. We use `PasswordVisualTransformation` so your key stays hidden while you type it.
+- **NeumorphicComponents.kt**: A special file that creates "soft UI" designs. The AI explanation box uses this to look like it's floating gracefully over your book.
 
 #### 1. The Bookshelf (`LibraryPage.kt`)
 - **Line 113**: The main `LibraryScreen` starts here. It's like a container for everything you see on the library page.
