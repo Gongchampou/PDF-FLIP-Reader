@@ -18,27 +18,16 @@ package com.gong.pdfflip.pages
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.ArrowDropUp
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Language
-import androidx.compose.material.icons.filled.MenuBook
-import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.SystemUpdate
-import androidx.compose.material.icons.filled.Tag
-import androidx.compose.material.icons.filled.Terminal
-import androidx.compose.material.icons.filled.TextFields
-import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -84,8 +73,9 @@ fun SettingsScreen(
     titleFontSizeIndex: Int,
     showTimer: Boolean,
     showAiTool: Boolean,
+    isAiCollapsed: Boolean,
     aiApiKey: String,
-    onPrefsChanged: (Int, Int, Int, Int, Boolean, Boolean, String) -> Unit
+    onPrefsChanged: (Int, Int, Int, Int, Boolean, Boolean, String, Boolean) -> Unit
 ) {
     BackHandler(onBack = onBack)
     val context = LocalContext.current
@@ -94,11 +84,11 @@ fun SettingsScreen(
     val uriHandler = LocalUriHandler.current
 
     // Preference saving helper
-    fun savePrefs(mode: Int, flip: Int, scroll: Int, font: Int, timer: Boolean, ai: Boolean, key: String) {
-        onPrefsChanged(mode, flip, scroll, font, timer, ai, key)
+    fun savePrefs(mode: Int, flip: Int, scroll: Int, font: Int, timer: Boolean, ai: Boolean, key: String, collapsed: Boolean) {
+        onPrefsChanged(mode, flip, scroll, font, timer, ai, key, collapsed)
         scope.launch(Dispatchers.IO) {
             val prefsFile = File(context.filesDir, "reader_prefs.txt")
-            prefsFile.writeText("$mode|$flip|$scroll|$font|${if (timer) "1" else "0"}|${if (ai) "1" else "0"}|$key")
+            prefsFile.writeText("$mode|$flip|$scroll|$font|${if (timer) "1" else "0"}|${if (ai) "1" else "0"}|$key|${if (collapsed) "1" else "0"}")
         }
     }
     
@@ -393,13 +383,13 @@ fun SettingsScreen(
                             Row {
                                 FilterChip(
                                     selected = pageModeIndex == 0,
-                                    onClick = { savePrefs(0, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, showTimer, showAiTool, aiApiKey) },
+                                    onClick = { savePrefs(0, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, showTimer, showAiTool, aiApiKey, isAiCollapsed) },
                                     label = { Text("Flip", fontSize = 12.sp) }
                                 )
                                 Spacer(Modifier.width(4.dp))
                                 FilterChip(
                                     selected = pageModeIndex == 1,
-                                    onClick = { savePrefs(1, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, showTimer, showAiTool, aiApiKey) },
+                                    onClick = { savePrefs(1, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, showTimer, showAiTool, aiApiKey, isAiCollapsed) },
                                     label = { Text("Scroll", fontSize = 12.sp) }
                                 )
                             }
@@ -413,13 +403,13 @@ fun SettingsScreen(
                             Row(modifier = Modifier.padding(top = 4.dp)) {
                                 FilterChip(
                                     selected = flipStyleIndex == 0,
-                                    onClick = { savePrefs(pageModeIndex, 0, scrollStyleIndex, titleFontSizeIndex, showTimer, showAiTool, aiApiKey) },
+                                    onClick = { savePrefs(pageModeIndex, 0, scrollStyleIndex, titleFontSizeIndex, showTimer, showAiTool, aiApiKey, isAiCollapsed) },
                                     label = { Text("Normal", fontSize = 12.sp) }
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 FilterChip(
                                     selected = flipStyleIndex == 1,
-                                    onClick = { savePrefs(pageModeIndex, 1, scrollStyleIndex, titleFontSizeIndex, showTimer, showAiTool, aiApiKey) },
+                                    onClick = { savePrefs(pageModeIndex, 1, scrollStyleIndex, titleFontSizeIndex, showTimer, showAiTool, aiApiKey, isAiCollapsed) },
                                     label = { Text("Natural Paper", fontSize = 12.sp) }
                                 )
                             }
@@ -429,13 +419,13 @@ fun SettingsScreen(
                             Row(modifier = Modifier.padding(top = 4.dp)) {
                                 FilterChip(
                                     selected = scrollStyleIndex == 0,
-                                    onClick = { savePrefs(pageModeIndex, flipStyleIndex, 0, titleFontSizeIndex, showTimer, showAiTool, aiApiKey) },
+                                    onClick = { savePrefs(pageModeIndex, flipStyleIndex, 0, titleFontSizeIndex, showTimer, showAiTool, aiApiKey, isAiCollapsed) },
                                     label = { Text("Page Snap", fontSize = 12.sp) }
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 FilterChip(
                                     selected = scrollStyleIndex == 1,
-                                    onClick = { savePrefs(pageModeIndex, flipStyleIndex, 1, titleFontSizeIndex, showTimer, showAiTool, aiApiKey) },
+                                    onClick = { savePrefs(pageModeIndex, flipStyleIndex, 1, titleFontSizeIndex, showTimer, showAiTool, aiApiKey, isAiCollapsed) },
                                     label = { Text("Smooth Scroll", fontSize = 12.sp) }
                                 )
                             }
@@ -457,19 +447,19 @@ fun SettingsScreen(
                         Row {
                             FilterChip(
                                 selected = titleFontSizeIndex == 0,
-                                onClick = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, 0, showTimer, showAiTool, aiApiKey) },
+                                onClick = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, 0, showTimer, showAiTool, aiApiKey, isAiCollapsed) },
                                 label = { Text("Small", fontSize = 12.sp) }
                             )
                             Spacer(Modifier.width(4.dp))
                             FilterChip(
                                 selected = titleFontSizeIndex == 1,
-                                onClick = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, 1, showTimer, showAiTool, aiApiKey) },
+                                onClick = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, 1, showTimer, showAiTool, aiApiKey, isAiCollapsed) },
                                 label = { Text("Medium", fontSize = 12.sp) }
                             )
                             Spacer(Modifier.width(4.dp))
                             FilterChip(
                                 selected = titleFontSizeIndex == 2,
-                                onClick = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, 2, showTimer, showAiTool, aiApiKey) },
+                                onClick = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, 2, showTimer, showAiTool, aiApiKey, isAiCollapsed) },
                                 label = { Text("Large", fontSize = 12.sp) }
                             )
                         }
@@ -494,7 +484,7 @@ fun SettingsScreen(
                         Text("Show Timer in Reader", fontSize = 14.sp, color = currentTextColor)
                         Switch(
                             checked = showTimer,
-                            onCheckedChange = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, it, showAiTool, aiApiKey) }
+                            onCheckedChange = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, it, showAiTool, aiApiKey, isAiCollapsed) }
                         )
                     }
                 }
@@ -560,10 +550,15 @@ fun SettingsScreen(
 
             // --- SECTION 3: AI ASSISTANT ---
             item {
+                var isAiExpanded by remember { mutableStateOf(false) }
+                
                 Spacer(Modifier.height(16.dp))
-                SettingsSectionHeader(title = "AI Assistant", icon = Icons.Default.AutoAwesome, tint = currentTextColor)
+                
                 Card(
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)
+                        .clickable { isAiExpanded = !isAiExpanded },
                     colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.5f)),
                     shape = RoundedCornerShape(12.dp)
                 ) {
@@ -573,41 +568,83 @@ fun SettingsScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Show AI", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = currentTextColor)
-                                Text("Add an AI button to the Reader for page analysis", fontSize = 12.sp, color = Color.Gray)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.AutoAwesome, null, tint = currentTextColor, modifier = Modifier.size(24.dp))
+                                Spacer(Modifier.width(12.dp))
+                                Text("Smart AI Settings", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = currentTextColor)
                             }
-                            Switch(
-                                checked = showAiTool,
-                                onCheckedChange = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, showTimer, it, aiApiKey) }
+                            Icon(
+                                if (isAiExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = null,
+                                tint = Color.Gray
                             )
                         }
 
-                        Spacer(Modifier.height(16.dp))
-
-                        var showKey by remember { mutableStateOf(false) }
-                        OutlinedTextField(
-                            value = aiApiKey,
-                            onValueChange = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, showTimer, showAiTool, it) },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Google AI API Key") },
-                            placeholder = { Text("Enter your Gemini API key") },
-                            leadingIcon = { Icon(Icons.Default.Key, contentDescription = null) },
-                            trailingIcon = {
-                                IconButton(onClick = { showKey = !showKey }) {
-                                    Icon(if (showKey) Icons.Default.Visibility else Icons.Default.VisibilityOff, "Toggle Key Visibility")
+                        AnimatedVisibility(visible = isAiExpanded) {
+                            Column(modifier = Modifier.padding(top = 16.dp)) {
+                                // Main AI Toggle
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("Show AI Tool", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = currentTextColor)
+                                        Text("Enable AI analysis in the Reader", fontSize = 11.sp, color = Color.Gray)
+                                    }
+                                    Switch(
+                                        checked = showAiTool,
+                                        onCheckedChange = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, showTimer, it, aiApiKey, isAiCollapsed) }
+                                    )
                                 }
-                            },
-                            visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
-                            singleLine = true,
-                            shape = RoundedCornerShape(8.dp)
-                        )
-                        Text(
-                            text = "Get your API key from Google AI Studio. The key is stored locally and never shared.",
-                            fontSize = 11.sp,
-                            color = Color.Gray,
-                            modifier = Modifier.padding(top = 4.dp, start = 4.dp)
-                        )
+
+                                if (showAiTool) {
+                                    Spacer(Modifier.height(16.dp))
+                                    
+                                    // Collapsed Mode Toggle
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text("Floating AI Bubble", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = currentTextColor)
+                                            Text("Use a floating bubble instead of a bar button", fontSize = 11.sp, color = Color.Gray)
+                                        }
+                                        Switch(
+                                            checked = isAiCollapsed,
+                                            onCheckedChange = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, showTimer, showAiTool, aiApiKey, it) }
+                                        )
+                                    }
+
+                                    Spacer(Modifier.height(16.dp))
+
+                                    var showKey by remember { mutableStateOf(false) }
+                                    OutlinedTextField(
+                                        value = aiApiKey,
+                                        onValueChange = { savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, showTimer, showAiTool, it, isAiCollapsed) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        label = { Text("Gemini API Key") },
+                                        placeholder = { Text("Enter your API key") },
+                                        leadingIcon = { Icon(Icons.Default.Key, contentDescription = null) },
+                                        trailingIcon = {
+                                            IconButton(onClick = { showKey = !showKey }) {
+                                                Icon(if (showKey) Icons.Default.Visibility else Icons.Default.VisibilityOff, "Toggle Visibility")
+                                            }
+                                        },
+                                        visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(8.dp)
+                                    )
+                                    Text(
+                                        text = "Get your key from Google AI Studio. Stored locally.",
+                                        fontSize = 11.sp,
+                                        color = Color.Gray,
+                                        modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }

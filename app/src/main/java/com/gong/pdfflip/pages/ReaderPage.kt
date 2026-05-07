@@ -70,6 +70,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
@@ -110,6 +111,7 @@ fun ReaderScreen(
     onPageModeToggle: (Int) -> Unit,
     showTimer: Boolean = false,
     showAiTool: Boolean = false,
+    isAiCollapsed: Boolean = false,
     aiApiKey: String = ""
 ) {
     BackHandler(onBack = onBack)
@@ -511,7 +513,7 @@ fun ReaderScreen(
                     }
 
                     // --- AI TOOL ---
-                    if (showAiTool) {
+                    if (showAiTool && !isAiCollapsed) {
                         ReaderToolIcon(
                             icon = Icons.Default.AutoAwesome, 
                             description = "AI Explain", 
@@ -915,6 +917,42 @@ fun ReaderScreen(
                                 .background(Color.Black.copy(alpha = 0.3f), CircleShape)
                                 .padding(horizontal = 12.dp, vertical = 4.dp)
                         )
+                    }
+                }
+            }
+
+            // --- FLOATING AI BUBBLE ---
+            if (showAiTool && isAiCollapsed && !isFullScreen) {
+                var offsetX by remember { mutableFloatStateOf(0f) }
+                var offsetY by remember { mutableFloatStateOf(0f) }
+
+                Box(modifier = Modifier.fillMaxSize()) {
+                    FloatingActionButton(
+                        onClick = {
+                            if (aiApiKey.isBlank()) {
+                                Toast.makeText(context, "Please set API key in Settings", Toast.LENGTH_LONG).show()
+                            } else {
+                                isAiMode = !isAiMode
+                                isDrawingMode = false
+                                isZoomMode = false
+                            }
+                        },
+                        modifier = Modifier
+                            .offset { IntOffset(offsetX.toInt(), offsetY.toInt()) }
+                            .padding(16.dp)
+                            .align(Alignment.CenterEnd)
+                            .pointerInput(Unit) {
+                                detectDragGestures { change, dragAmount ->
+                                    change.consume()
+                                    offsetX += dragAmount.x
+                                    offsetY += dragAmount.y
+                                }
+                            },
+                        containerColor = if (isAiMode) Color(0xFF6200EE) else currentBgColor.copy(alpha = 0.8f),
+                        contentColor = if (isAiMode) Color.White else currentTextColor,
+                        shape = CircleShape
+                    ) {
+                        Icon(Icons.Default.AutoAwesome, "AI Assistant")
                     }
                 }
             }
