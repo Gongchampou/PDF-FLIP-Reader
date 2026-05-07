@@ -112,7 +112,8 @@ fun ReaderScreen(
     showTimer: Boolean = false,
     showAiTool: Boolean = false,
     isAiCollapsed: Boolean = false,
-    aiApiKey: String = ""
+    aiApiKey: String = "",
+    aiModel: String = "gemini-1.5-flash"
 ) {
     BackHandler(onBack = onBack)
     val context = LocalContext.current
@@ -657,6 +658,7 @@ fun ReaderScreen(
                                 onAiSelect = { bitmap, path -> 
                                     performAiAnalysis(
                                         apiKey = aiApiKey,
+                                        modelName = aiModel,
                                         pageBitmap = bitmap,
                                         circlePath = path,
                                         onStart = { isAiAnalyzing = true; isAiMode = false },
@@ -702,6 +704,7 @@ fun ReaderScreen(
                                         onAiSelect = { bitmap, path -> 
                                             performAiAnalysis(
                                                 apiKey = aiApiKey,
+                                                modelName = aiModel,
                                                 pageBitmap = bitmap,
                                                 circlePath = path,
                                                 onStart = { isAiAnalyzing = true; isAiMode = false },
@@ -748,6 +751,7 @@ fun ReaderScreen(
                                 onAiSelect = { bitmap, path -> 
                                     performAiAnalysis(
                                         apiKey = aiApiKey,
+                                        modelName = aiModel,
                                         pageBitmap = bitmap,
                                         circlePath = path,
                                         onStart = { isAiAnalyzing = true; isAiMode = false },

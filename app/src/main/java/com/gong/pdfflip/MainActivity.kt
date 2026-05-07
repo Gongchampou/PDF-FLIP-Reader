@@ -53,6 +53,7 @@ class MainActivity : ComponentActivity() {
             var showAiTool by remember { mutableStateOf(false) }
             var isAiCollapsed by remember { mutableStateOf(false) }
             var aiApiKey by remember { mutableStateOf("") }
+            var aiModel by remember { mutableStateOf("gemini-2.5-flash") }
 
             // Permission States
             var showPermissionDialog by remember { mutableStateOf(false) }
@@ -111,6 +112,9 @@ class MainActivity : ComponentActivity() {
                     if (parts.size >= 8) {
                         isAiCollapsed = parts[7] == "1"
                     }
+                    if (parts.size >= 9) {
+                        aiModel = parts[8]
+                    }
                 }
             }
 
@@ -139,7 +143,8 @@ class MainActivity : ComponentActivity() {
                     showAiTool = showAiTool,
                     isAiCollapsed = isAiCollapsed,
                     aiApiKey = aiApiKey,
-                    onPrefsChange = { mode, flip, scroll, font, timer, ai, key, collapsed ->
+                    aiModel = aiModel,
+                    onPrefsChange = { mode, flip, scroll, font, timer, ai, key, collapsed, model ->
                         pageModeIndex = mode
                         flipStyleIndex = flip
                         scrollStyleIndex = scroll
@@ -148,9 +153,10 @@ class MainActivity : ComponentActivity() {
                         showAiTool = ai
                         aiApiKey = key
                         isAiCollapsed = collapsed
+                        aiModel = model
                         // Save to storage
                         val prefsFile = java.io.File(filesDir, "reader_prefs.txt")
-                        prefsFile.writeText("$mode|$flip|$scroll|$font|${if (timer) "1" else "0"}|${if (ai) "1" else "0"}|$key|${if (collapsed) "1" else "0"}")
+                        prefsFile.writeText("$mode|$flip|$scroll|$font|${if (timer) "1" else "0"}|${if (ai) "1" else "0"}|$key|${if (collapsed) "1" else "0"}|$model")
                     }
                 )
             }
@@ -170,7 +176,8 @@ fun MainAppNavigation(
     showAiTool: Boolean,
     isAiCollapsed: Boolean,
     aiApiKey: String,
-    onPrefsChange: (Int, Int, Int, Int, Boolean, Boolean, String, Boolean) -> Unit
+    aiModel: String,
+    onPrefsChange: (Int, Int, Int, Int, Boolean, Boolean, String, Boolean, String) -> Unit
 ) {
     // Current screen state
     var currentScreen by remember { mutableStateOf(Screen.Library) }
@@ -216,12 +223,13 @@ fun MainAppNavigation(
                     scrollStyleIndex = scrollStyleIndex,
                     onBack = { currentScreen = Screen.Library },
                     onPageModeToggle = { newMode -> 
-                        onPrefsChange(newMode, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, showTimer, showAiTool, aiApiKey, isAiCollapsed)
+                        onPrefsChange(newMode, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, showTimer, showAiTool, aiApiKey, isAiCollapsed, aiModel)
                     },
                     showTimer = showTimer,
                     showAiTool = showAiTool,
                     isAiCollapsed = isAiCollapsed,
-                    aiApiKey = aiApiKey
+                    aiApiKey = aiApiKey,
+                    aiModel = aiModel
                 )
             }
         }
@@ -237,6 +245,7 @@ fun MainAppNavigation(
                 showAiTool = showAiTool,
                 isAiCollapsed = isAiCollapsed,
                 aiApiKey = aiApiKey,
+                aiModel = aiModel,
                 onPrefsChanged = onPrefsChange
             )
         }

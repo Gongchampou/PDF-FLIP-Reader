@@ -74,8 +74,8 @@ fun SettingsScreen(
     showTimer: Boolean,
     showAiTool: Boolean,
     isAiCollapsed: Boolean,
-    aiApiKey: String,
-    onPrefsChanged: (Int, Int, Int, Int, Boolean, Boolean, String, Boolean) -> Unit
+    aiApiKey: String, aiModel: String,
+    onPrefsChanged: (Int, Int, Int, Int, Boolean, Boolean, String, Boolean, String) -> Unit
 ) {
     BackHandler(onBack = onBack)
     val context = LocalContext.current
@@ -84,11 +84,11 @@ fun SettingsScreen(
     val uriHandler = LocalUriHandler.current
 
     // Preference saving helper
-    fun savePrefs(mode: Int, flip: Int, scroll: Int, font: Int, timer: Boolean, ai: Boolean, key: String, collapsed: Boolean) {
-        onPrefsChanged(mode, flip, scroll, font, timer, ai, key, collapsed)
+    fun savePrefs(mode: Int, flip: Int, scroll: Int, font: Int, timer: Boolean, ai: Boolean, key: String, collapsed: Boolean, model: String = aiModel) {
+        onPrefsChanged(mode, flip, scroll, font, timer, ai, key, collapsed, model)
         scope.launch(Dispatchers.IO) {
             val prefsFile = File(context.filesDir, "reader_prefs.txt")
-            prefsFile.writeText("$mode|$flip|$scroll|$font|${if (timer) "1" else "0"}|${if (ai) "1" else "0"}|$key|${if (collapsed) "1" else "0"}")
+            prefsFile.writeText("$mode|$flip|$scroll|$font|${if (timer) "1" else "0"}|${if (ai) "1" else "0"}|$key|${if (collapsed) "1" else "0"}|$model")
         }
     }
     
@@ -636,6 +636,49 @@ fun SettingsScreen(
                                         singleLine = true,
                                         shape = RoundedCornerShape(8.dp)
                                     )
+                                    
+                                    Spacer(Modifier.height(16.dp))
+                                    
+                                    // Model Selection
+                                    Text("AI Model Selection", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = currentTextColor)
+                                    Spacer(Modifier.height(8.dp))
+                                    
+                                    val models = listOf("gemini-2.5-flash", "gemini-3-flash-preview", "gemini-3.1-flash-lite")
+                                    var isModelDropdownExpanded by remember { mutableStateOf(false) }
+                                    
+                                    Box(modifier = Modifier.fillMaxWidth()) {
+                                        OutlinedCard(
+                                            onClick = { isModelDropdownExpanded = true },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(aiModel, color = currentTextColor)
+                                                Icon(Icons.Default.ArrowDropDown, null)
+                                            }
+                                        }
+                                        
+                                        DropdownMenu(
+                                            expanded = isModelDropdownExpanded,
+                                            onDismissRequest = { isModelDropdownExpanded = false },
+                                            modifier = Modifier.fillMaxWidth(0.8f)
+                                        ) {
+                                            models.forEach { model ->
+                                                DropdownMenuItem(
+                                                    text = { Text(model) },
+                                                    onClick = {
+                                                        savePrefs(pageModeIndex, flipStyleIndex, scrollStyleIndex, titleFontSizeIndex, showTimer, showAiTool, aiApiKey, isAiCollapsed, model)
+                                                        isModelDropdownExpanded = false
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+
                                     Text(
                                         text = "Get your key from Google AI Studio. Stored locally.",
                                         fontSize = 11.sp,

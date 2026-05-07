@@ -126,6 +126,7 @@ fun AiExplanationOverlay(
  */
 fun performAiAnalysis(
     apiKey: String,
+    modelName: String,
     pageBitmap: Bitmap,
     circlePath: List<Offset>,
     onStart: () -> Unit,
@@ -152,7 +153,7 @@ fun performAiAnalysis(
             
             val croppedBitmap = Bitmap.createBitmap(pageBitmap, left, top, width, height)
             
-            val model = GenerativeModel(modelName = "gemini-2.5-flash", apiKey = apiKey)
+            val model = GenerativeModel(modelName = modelName, apiKey = apiKey)
             val inputContent = content {
                 image(croppedBitmap)
                 text("Analyzing the content")
