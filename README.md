@@ -8,15 +8,13 @@ Welcome to **PDFFlip**! This app is your digital bookshelf. It helps you keep yo
 
 -   **Smart Library**: Automatically finds your PDFs and lets you tag them with colors.
 -   **Folders inside Folders 📂**: Just like on your computer, you can create folders for your books!
--   **Unified Item Counts 🔢**: Each folder shows a single number in the bottom corner representing the total count of folders and files inside. No extra text, just the data.
--   **Intelligent Text Contrast 🌓**: Library cards and folder titles automatically switch between black and white text to ensure they are always readable, even on dark custom backgrounds.
+-   **Backup & Share 📤**: Export your entire library—including all your folders, PDF files, and colorful categories—into a single file to share with friends or move to a new device.
+-   **Unified Item Counts 🔢**: Each folder shows a single number in the bottom corner representing the total count of folders and files inside.
+-   **Intelligent Text Contrast 🌓**: Library cards and folder titles automatically switch between black and white text to ensure they are always readable.
 -   **Smart Navigation 📍**: When you go inside folders, the app shows the folder path (like `folder/subfolder`) so you always know where you are.
 -   **Modern File Info ℹ️**: Tap the question mark icon in the reader bottom bar to see the file title, size, and folder path in a beautiful blurred overlay.
--   **Custom Tags 🎨**: Give your "Work" PDFs a blue tag and your "Hobbies" a bright yellow one. Tags are managed from the main library page to keep things simple.
--   **Remembers Your Spot**: Close the app anytime! When you come back, you'll be right where you left off.
 -   **AI Assistant 🤖**: Circle any part of a page and let AI explain it to you instantly!
--   **Space-Saving Settings ⚙️**: Keep your app clean by hiding advanced AI settings until you need them.
--   **Floating AI Bubble 🫧**: A tiny, movable bubble that stays out of your way while you read.
+-   **Space-Saving Settings ⚙️**: Keep your app clean by hiding advanced AI settings and backup hints until you need them.
 
 ---
 
@@ -34,30 +32,31 @@ The app creates a special folder on your phone so you can easily find your books
 If you are new to coding, think of the app like a house with different rooms:
 
 ### 🏠 The Architecture (File Sizes)
-- **`MainActivity.kt`** (255 lines): The **Front Door**. This is the first thing that runs. It decides which room (page) you are in.
+- **`MainActivity.kt`** (257 lines): The **Front Door**. This is the first thing that runs. It decides which room (page) you are in.
 - **`LibraryPage.kt`** (1254 lines): The **Bookshelf**. It manages all your files and folders.
 - **`ReaderPage.kt`** (1334 lines): The **Reading Chair**. It handles showing your PDF and the **Modern File Info Overlay**.
-- **`SettingsPage.kt`** (847 lines): The **Control Panel**. Where you change the theme and set up your **AI API Key**.
-- **`AiAssistantPage.kt`** (180 lines): The **AI Brain**. This is where the app talks to Google Gemini to explain your circled text.
+- **`SettingsPage.kt`** (1007 lines): The **Control Panel**. Where you change the theme, set up **AI**, and **Backup** your library.
+- **`AiAssistantPage.kt`** (180 lines): The **AI Brain**. This is where the app talks to Google Gemini.
 
 ### 🔍 Deep Dive into the Code (Where things are)
 
-#### 1. The AI Integration 🤖
+#### 1. The Backup System 🚚
+- **BackupUtils.kt**: The "Moving Truck". This utility handles zipping up your entire `PDF Flip` folder and all your settings so you can share them.
+- **SettingsPage.kt (Line 118)**: This is where the **Export/Import** logic lives. It uses icon-only buttons (Cloud Upload/Download) to save or open your library backup files.
+- **SettingsPage.kt (Line 598)**: The **Hint Toggle**. This code adds a small information icon that shows or hides the backup instructions to save space.
+
+#### 2. The AI Integration 🤖
 - **AiAssistantPage.kt (Line 124)**: **`performAiAnalysis()`** is the logic that sends your image to Google Gemini.
-- **ReaderPage.kt (Line 1177)**: **`ReaderPageContent`** is where the page is drawn, including zoom and drawing modes.
-- **SettingsPage.kt (Line 635)**: The **Collapsible AI Section**. This hides the API Key settings inside an expandable card to keep things tidy.
-- **AiAssistantPage.kt (Line 37)**: **`AiCanvas`** is a special invisible layer that "sees" where you draw a circle on the page.
+- **ReaderPage.kt (Line 1177)**: **`ReaderPageContent`** is where the page is drawn.
+- **SettingsPage.kt (Line 774)**: The **Collapsible AI Section**.
 
-#### 2. The Bookshelf (`LibraryPage.kt`)
+#### 3. The Bookshelf (`LibraryPage.kt`)
 - **Line 225**: **`scanLibrary()`** is the "Eyes" of the app. It looks for books in your folders.
-- **Line 610**: This is where the app creates a new folder on your phone when you click the "New Folder" button.
-- **Line 1015**: The **Dynamic Navigation Header**. This code checks if you are in a folder. If you are, it shows the **Folder Path**.
-- **Line 111**: **`getContrastColor()`** is a smart helper that makes sure text is either black or white depending on the background color.
+- **Line 111**: **`getContrastColor()`** is a smart helper that makes sure text is either black or white depending on the background.
 
-#### 3. The Reading Room (`ReaderPage.kt`)
+#### 4. The Reading Room (`ReaderPage.kt`)
 - **Line 95**: The `ReaderScreen` starts. It takes a PDF and opens it for you.
-- **Line 1277**: **`FileInfoOverlay`** creates the beautiful blurred box that shows your file's name and size.
-- **Line 188**: **`getReadableFileSize()`** is a helper that calculates how much space your book takes up.
+- **Line 1277**: **`FileInfoOverlay`** creates the beautiful blurred box that shows your file's details.
 
 ---
 
@@ -67,4 +66,5 @@ If you are new to coding, think of the app like a house with different rooms:
 -   **State**: This is how the app "remembers" things. For example, if you toggle "Dark Mode," the app remembers to stay dark.
 -   **Modifier**: These are like adjectives. You can say: "Make this button **red**," "**large**," or "**draggable**."
 
+### 💁‍♂️💁‍ Let contribute and developed his "PDF Flip" app for community of student who really i need of freemium for there work style.
 Happy Reading! 📖🚀

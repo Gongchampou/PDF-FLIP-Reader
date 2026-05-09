@@ -16,8 +16,11 @@ package com.gong.pdfflip.pages
    - Line 19 = versionName = "1.0.1"( increase the number )
  */
 
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -52,6 +55,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.URL
+import com.gong.pdfflip.utils.BackupUtils
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 
@@ -109,7 +113,70 @@ fun SettingsScreen(
 
     // States for Tag Management
     val availableTags = remember { mutableStateListOf<String>() }
-    
+
+    // --- BACKUP & SHARE LOGIC ---
+    var isBackupLoading by remember { mutableStateOf(false) }
+    var showImportConfirm by remember { mutableStateOf<Uri?>(null) }
+    var showBackupHint by remember { mutableStateOf(false) }
+
+    val createBackupLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        uri?.let {
+            isBackupLoading = true
+            scope.launch(Dispatchers.IO) {
+                try {
+                    context.contentResolver.openOutputStream(it)?.use { os ->
+                        val success = BackupUtils.exportLibrary(context, os)
+                        withContext(Dispatchers.Main) {
+                            isBackupLoading = false
+                            if (success) Toast.makeText(context, "Library exported! You can share it now.", Toast.LENGTH_LONG).show()
+                            else Toast.makeText(context, "Export failed", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) { isBackupLoading = false; Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show() }
+                }
+            }
+        }
+    }
+
+    val openBackupLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { showImportConfirm = it }
+    }
+
+    fun performImport(uri: Uri) {
+        isBackupLoading = true
+        scope.launch(Dispatchers.IO) {
+            try {
+                context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                    val success = BackupUtils.importLibrary(context, inputStream)
+                    withContext(Dispatchers.Main) {
+                        isBackupLoading = false
+                        showImportConfirm = null
+                        if (success) {
+                            // Reload local screen state
+                            val tagsFile = File(context.filesDir, "available_tags.txt")
+                            if (tagsFile.exists()) {
+                                availableTags.clear()
+                                availableTags.addAll(tagsFile.readLines().filter { it.isNotBlank() })
+                            }
+                            val themeFile = File(context.filesDir, "app_theme.txt")
+                            if (themeFile.exists()) {
+                                val savedIndex = themeFile.readText().toIntOrNull() ?: 2
+                                selectedThemeIndex = savedIndex.coerceIn(0, themeOptions.size - 1)
+                                onThemeChanged(selectedThemeIndex)
+                            }
+                            Toast.makeText(context, "Library Restored Successfully!", Toast.LENGTH_LONG).show()
+                        } else {
+                            Toast.makeText(context, "Import failed: Invalid backup file", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { isBackupLoading = false; Toast.makeText(context, "Error: ${e.message}", Toast.LENGTH_SHORT).show() }
+            }
+        }
+    }
+
     // Deletion states
     var tagToDelete by remember { mutableStateOf<String?>(null) }
     var userInputTagName by remember { mutableStateOf("") }
@@ -239,6 +306,30 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { tagToDelete = null; userInputTagName = "" }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // --- IMPORT CONFIRMATION DIALOG ---
+    if (showImportConfirm != null) {
+        AlertDialog(
+            onDismissRequest = { showImportConfirm = null },
+            title = { Text("Restore Library?", fontWeight = FontWeight.Bold) },
+            text = {
+                Text("This will replace your current categories and folders with the ones from the backup. Your existing PDFs will remain on disk, but their tags might change. Proceed?")
+            },
+            confirmButton = {
+                Button(
+                    onClick = { performImport(showImportConfirm!!) },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text("Yes, Restore", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showImportConfirm = null }) {
                     Text("Cancel")
                 }
             }
@@ -490,6 +581,74 @@ fun SettingsScreen(
                     }
                 }
             }
+
+            // --- SECTION 1.8: BACKUP & SHARE (Ultra Compact with Hint) ---
+            item {
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SettingsSectionHeader(title = "Backup & Share", icon = Icons.Default.Backup, tint = currentTextColor)
+                        
+                        // Hint Icon to show/hide description
+                        IconButton(
+                            onClick = { showBackupHint = !showBackupHint },
+                            modifier = Modifier.size(24.dp).padding(start = 4.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Info, 
+                                contentDescription = "Hint", 
+                                tint = currentTextColor.copy(alpha = 0.4f),
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
+                    
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Export Icon Button
+                        IconButton(
+                            onClick = { 
+                                val fileName = "PDFFlip_Backup_${System.currentTimeMillis()}.flipbackup"
+                                createBackupLauncher.launch(fileName) 
+                            },
+                            enabled = !isBackupLoading,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            if (isBackupLoading) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = currentTextColor)
+                            else Icon(Icons.Default.CloudUpload, "Export", tint = currentTextColor, modifier = Modifier.size(20.dp))
+                        }
+                        
+                        // Import Icon Button
+                        IconButton(
+                            onClick = { openBackupLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) },
+                            enabled = !isBackupLoading,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(Icons.Default.CloudDownload, "Import", tint = currentTextColor, modifier = Modifier.size(20.dp))
+                        }
+                    }
+                }
+                
+                AnimatedVisibility(visible = showBackupHint) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 4.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            text = "Export your entire library (folders, books, and tags) to share or move to another device.",
+                            fontSize = 11.sp,
+                            color = currentTextColor.copy(alpha = 0.6f),
+                            lineHeight = 14.sp,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+                }
+            }
+
             item {
                 SettingsSectionHeader(title = "Manage (Tags)", icon = Icons.Default.Tag, tint = currentTextColor)
             }
