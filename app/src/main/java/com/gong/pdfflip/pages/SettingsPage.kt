@@ -186,7 +186,7 @@ fun SettingsScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 4.dp)
-                            .background(Color.LightGray.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
+                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f), RoundedCornerShape(4.dp))
                             .padding(horizontal = 8.dp, vertical = 2.dp)
                     ) {
                         Text(
@@ -194,7 +194,8 @@ fun SettingsScreen(
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp,
                             modifier = Modifier.weight(1f),
-                            textAlign = TextAlign.Center
+                            textAlign = TextAlign.Center,
+                            color = currentTextColor
                         )
                         IconButton(
                             onClick = { 
@@ -207,7 +208,7 @@ fun SettingsScreen(
                                 Icons.Default.ContentCopy, 
                                 contentDescription = "Copy", 
                                 modifier = Modifier.size(16.dp),
-                                tint = Color.Gray
+                                tint = currentTextColor.copy(alpha = 0.6f)
                             )
                         }
                     }
@@ -373,7 +374,7 @@ fun SettingsScreen(
                 
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(top = 1.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.3f)),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Column(modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp, top = 2.dp)) {
@@ -440,7 +441,7 @@ fun SettingsScreen(
                 SettingsSectionHeader(title = "Library Title", icon = Icons.Default.TextFields, tint = currentTextColor)
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(top = 1.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.3f)),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Column(modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp, top = 2.dp)) {
@@ -473,7 +474,7 @@ fun SettingsScreen(
                 SettingsSectionHeader(title = "Reading Timer", icon = Icons.Default.Timer, tint = currentTextColor)
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(top = 1.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.3f)),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Row(
@@ -559,7 +560,7 @@ fun SettingsScreen(
                         .fillMaxWidth()
                         .padding(top = 8.dp)
                         .clickable { isAiExpanded = !isAiExpanded },
-                    colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.5f)),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
@@ -698,7 +699,7 @@ fun SettingsScreen(
                 SettingsSectionHeader(title = "About", icon = Icons.Default.Info, tint = currentTextColor)
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(top = 1.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.5f)),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
@@ -721,8 +722,8 @@ fun SettingsScreen(
                             modifier = Modifier.fillMaxWidth(),
                             enabled = !isCheckingUpdate,
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (updateMessage != null) Color(0xFF4CAF50) else currentTextColor.copy(alpha = 0.1f),
-                                contentColor = if (updateMessage != null) Color.White else currentTextColor
+                                containerColor = if (updateMessage != null) Color(0xFF4CAF50) else MaterialTheme.colorScheme.secondaryContainer,
+                                contentColor = if (updateMessage != null) Color.White else MaterialTheme.colorScheme.onSecondaryContainer
                             ),
                             shape = RoundedCornerShape(4.dp),
                             contentPadding = PaddingValues(vertical = 6.dp)

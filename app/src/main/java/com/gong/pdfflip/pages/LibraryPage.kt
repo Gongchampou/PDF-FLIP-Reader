@@ -108,6 +108,12 @@ val tagColorOptions = listOf(
     "#607D8B"  // Blue Grey
 )
 
+// Helper to determine text contrast color based on background luminance
+fun getContrastColor(backgroundColor: Color): Color {
+    val luminance = (0.299 * backgroundColor.red + 0.587 * backgroundColor.green + 0.114 * backgroundColor.blue)
+    return if (luminance > 0.5) Color.Black else Color.White
+}
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1029,7 +1035,13 @@ fun LibraryScreen(
                     if (isGridView) {
                         LazyVerticalGrid(columns = GridCells.Fixed(4), contentPadding = PaddingValues(6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             gridItems(filteredFolders) { folder ->
-                                FolderGridItem(folder, onClick = { updatePath(folder.path) }, onDelete = { folderToDelete = folder; deleteConfirmCode = (1000 + Random.nextInt(9000)).toString() })
+                                val itemCount = libraryFolders.count { it.parentPath == folder.path } + libraryBooks.count { it.folderPath == folder.path }
+                                FolderGridItem(
+                                    folder = folder,
+                                    itemCount = itemCount,
+                                    onClick = { updatePath(folder.path) }, 
+                                    onDelete = { folderToDelete = folder; deleteConfirmCode = (1000 + Random.nextInt(9000)).toString() }
+                                )
                             }
                             gridItems(filteredBooks) { book ->
                                 BookGridItem(book, tagColor = tagToColorMap[book.tag] ?: Color.Gray, fontSize = gridFontSize, lineHeight = gridLineHeight, onClick = { updateRecent(book, book.currentPage, book.totalPages); onBookClick(book) }, onDelete = { bookToDelete = book; deleteConfirmCode = (1000 + Random.nextInt(9000)).toString() }, onTagClick = { showAssignTagDialog = book })
@@ -1038,7 +1050,13 @@ fun LibraryScreen(
                     } else {
                         LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(filteredFolders) { folder ->
-                                FolderListItem(folder, onClick = { updatePath(folder.path) }, onDelete = { folderToDelete = folder; deleteConfirmCode = (1000 + Random.nextInt(9000)).toString() })
+                                val itemCount = libraryFolders.count { it.parentPath == folder.path } + libraryBooks.count { it.folderPath == folder.path }
+                                FolderListItem(
+                                    folder = folder,
+                                    itemCount = itemCount,
+                                    onClick = { updatePath(folder.path) }, 
+                                    onDelete = { folderToDelete = folder; deleteConfirmCode = (1000 + Random.nextInt(9000)).toString() }
+                                )
                             }
                             items(filteredBooks) { book ->
                                 BookListItem(book, tagColor = tagToColorMap[book.tag] ?: Color.Gray, fontSize = listFontSize, lineHeight = listLineHeight, onClick = { updateRecent(book, book.currentPage, book.totalPages); onBookClick(book) }, onDelete = { bookToDelete = book; deleteConfirmCode = (1000 + Random.nextInt(9000)).toString() }, onTagClick = { showAssignTagDialog = book })
@@ -1052,12 +1070,16 @@ fun LibraryScreen(
 }
 
 @Composable
-fun FolderGridItem(folder: Folder, onClick: () -> Unit, onDelete: () -> Unit) {
+fun FolderGridItem(folder: Folder, itemCount: Int, onClick: () -> Unit, onDelete: () -> Unit) {
     val defaultColor = MaterialTheme.colorScheme.surfaceVariant
     val bgColor = remember(folder.color, defaultColor) {
         try { if (folder.color != null) Color(android.graphics.Color.parseColor(folder.color)) else defaultColor }
         catch (e: Exception) { defaultColor }
     }
+    val contentColor = remember(bgColor, folder.color) {
+        if (folder.color != null) getContrastColor(bgColor) else null
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth().aspectRatio(0.7f).clickable { onClick() },
         shape = RoundedCornerShape(8.dp),
@@ -1074,20 +1096,32 @@ fun FolderGridItem(folder: Folder, onClick: () -> Unit, onDelete: () -> Unit) {
                     Icons.Default.Folder,
                     null,
                     modifier = Modifier.size(48.dp),
-                    tint = if (folder.color != null) Color.Black.copy(alpha = 0.7f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+                    tint = contentColor?.copy(alpha = 0.7f) ?: MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
                     text = folder.name,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
-                    color = if (folder.color != null) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = contentColor ?: MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(horizontal = 4.dp)
                 )
             }
+
+            // Total Item Count (Number Only) at the bottom-most left corner
+            Text(
+                text = itemCount.toString(),
+                fontSize = 9.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = (contentColor ?: MaterialTheme.colorScheme.onSurfaceVariant).copy(alpha = 0.6f),
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(4.dp)
+            )
+
             IconButton(
                 onClick = onDelete,
                 modifier = Modifier.align(Alignment.TopEnd).size(24.dp).padding(4.dp)
@@ -1096,7 +1130,7 @@ fun FolderGridItem(folder: Folder, onClick: () -> Unit, onDelete: () -> Unit) {
                     Icons.Default.Close,
                     null,
                     modifier = Modifier.size(16.dp),
-                    tint = if (folder.color != null) Color.Black.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                    tint = contentColor?.copy(alpha = 0.6f) ?: MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                 )
             }
         }
@@ -1104,7 +1138,7 @@ fun FolderGridItem(folder: Folder, onClick: () -> Unit, onDelete: () -> Unit) {
 }
 
 @Composable
-fun FolderListItem(folder: Folder, onClick: () -> Unit, onDelete: () -> Unit) {
+fun FolderListItem(folder: Folder, itemCount: Int, onClick: () -> Unit, onDelete: () -> Unit) {
     val folderColor = remember(folder.color) {
         try { if (folder.color != null) Color(android.graphics.Color.parseColor(folder.color)) else null }
         catch (e: Exception) { null }
@@ -1117,7 +1151,10 @@ fun FolderListItem(folder: Folder, onClick: () -> Unit, onDelete: () -> Unit) {
             tint = folderColor ?: MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
         )
         Spacer(Modifier.width(12.dp))
-        Text(text = folder.name, modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = folder.name, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
+            Text(text = itemCount.toString(), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+        }
         IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, null, tint = Color.Red.copy(alpha = 0.6f)) }
     }
 }
@@ -1159,18 +1196,22 @@ fun BookGridItem(book: Book, tagColor: Color, fontSize: androidx.compose.ui.unit
         try { if (book.cardColor != null) Color(android.graphics.Color.parseColor(book.cardColor)) else defaultColor }
         catch (e: Exception) { defaultColor }
     }
+    val contentColor = remember(bgColor, book.cardColor) {
+        if (book.cardColor != null) getContrastColor(bgColor) else null
+    }
+
     Card(modifier = Modifier.fillMaxWidth().aspectRatio(0.7f).clickable { onClick() }, shape = RoundedCornerShape(8.dp), colors = CardDefaults.cardColors(containerColor = bgColor), elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)) {
         Box(modifier = Modifier.fillMaxSize()) {
             Column(modifier = Modifier.fillMaxSize()) {
                 BookCover(uri = book.uri, modifier = Modifier.fillMaxWidth().weight(1.3f).clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp)))
                 Column(modifier = Modifier.fillMaxWidth().weight(0.7f).padding(horizontal = 4.dp, vertical = 2.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                    Text(text = book.name.substringBeforeLast("."), fontSize = fontSize, fontWeight = FontWeight.Bold, color = if (book.cardColor != null) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, lineHeight = lineHeight)
+                    Text(text = book.name.substringBeforeLast("."), fontSize = fontSize, fontWeight = FontWeight.Bold, color = contentColor ?: MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, lineHeight = lineHeight)
                     if (book.totalPages > 0) {
                         val progress = (book.currentPage + 1).toFloat() / book.totalPages
                         val percent = (progress * 100).toInt()
                         Row(modifier = Modifier.fillMaxWidth().padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                            LinearProgressIndicator(progress = { progress }, modifier = Modifier.weight(1f).height(2.dp).clip(CircleShape), color = if (book.cardColor != null) Color.Black.copy(alpha = 0.7f) else MaterialTheme.colorScheme.primary, trackColor = if (book.cardColor != null) Color.Black.copy(alpha = 0.1f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.1f))
-                            Text(text = "$percent%", fontSize = 6.sp, fontWeight = FontWeight.Bold, color = if (book.cardColor != null) Color.Black.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                            LinearProgressIndicator(progress = { progress }, modifier = Modifier.weight(1f).height(2.dp).clip(CircleShape), color = contentColor?.copy(alpha = 0.7f) ?: MaterialTheme.colorScheme.primary, trackColor = contentColor?.copy(alpha = 0.1f) ?: MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.1f))
+                            Text(text = "$percent%", fontSize = 6.sp, fontWeight = FontWeight.Bold, color = contentColor?.copy(alpha = 0.6f) ?: MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
                         }
                     }
                 }
@@ -1190,19 +1231,23 @@ fun BookListItem(book: Book, tagColor: Color, fontSize: androidx.compose.ui.unit
         try { if (book.cardColor != null) Color(android.graphics.Color.parseColor(book.cardColor)) else defaultColor }
         catch (e: Exception) { defaultColor }
     }
+    val contentColor = remember(bgColor, book.cardColor) {
+        if (book.cardColor != null) getContrastColor(bgColor) else null
+    }
+
     Card(modifier = Modifier.fillMaxWidth().height(60.dp).clickable { onClick() }, shape = RoundedCornerShape(6.dp), colors = CardDefaults.cardColors(containerColor = bgColor), elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
         Row(modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             BookCover(uri = book.uri, modifier = Modifier.size(45.dp).clip(RoundedCornerShape(4.dp)))
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(text = book.name.substringBeforeLast("."), fontSize = fontSize, fontWeight = FontWeight.Bold, color = if (book.cardColor != null) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, lineHeight = lineHeight)
+                Text(text = book.name.substringBeforeLast("."), fontSize = fontSize, fontWeight = FontWeight.Bold, color = contentColor ?: MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, lineHeight = lineHeight)
                 if (book.totalPages > 0) {
                     val percent = ((book.currentPage + 1).toFloat() / book.totalPages * 100).toInt()
-                    Text(text = "Page ${book.currentPage + 1}/${book.totalPages} ($percent%)", fontSize = 10.sp, color = if (book.cardColor != null) Color.Black.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+                    Text(text = "Page ${book.currentPage + 1}/${book.totalPages} ($percent%)", fontSize = 10.sp, color = contentColor?.copy(alpha = 0.6f) ?: MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
                 }
             }
-            IconButton(onClick = onTagClick, modifier = Modifier.size(32.dp)) { Icon(Icons.AutoMirrored.Filled.Label, null, tint = if (book.tag != null) tagColor else if (book.cardColor != null) Color.Black.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f), modifier = Modifier.size(16.dp)) }
-            IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Delete, null, tint = if (book.cardColor != null) Color.Black.copy(alpha = 0.6f) else Color.Red.copy(alpha = 0.6f), modifier = Modifier.size(16.dp)) }
+            IconButton(onClick = onTagClick, modifier = Modifier.size(32.dp)) { Icon(Icons.AutoMirrored.Filled.Label, null, tint = if (book.tag != null) tagColor else contentColor?.copy(alpha = 0.6f) ?: MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f), modifier = Modifier.size(16.dp)) }
+            IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Delete, null, tint = contentColor?.copy(alpha = 0.6f) ?: Color.Red.copy(alpha = 0.6f), modifier = Modifier.size(16.dp)) }
         }
     }
 }
