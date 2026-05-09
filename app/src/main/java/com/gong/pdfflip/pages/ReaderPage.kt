@@ -11,7 +11,7 @@ package com.gong.pdfflip.pages
  * 5. Text-to-Speech: "Read Aloud" function with intelligent text cleaning.
  */
 
-import android.content.ContentValues
+import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
@@ -24,13 +24,12 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.*
 import androidx.compose.animation.core.*
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -52,21 +51,17 @@ import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -102,6 +97,7 @@ enum class SpeechState {
 fun ReaderScreen(
     uri: Uri, 
     fileName: String,
+    folderPath: String = "/",
     sourceUriStr: String? = null,
     initialPage: Int = 0, 
     initialPageModeIndex: Int = 0,
@@ -132,6 +128,7 @@ fun ReaderScreen(
     var isAiMode by remember { mutableStateOf(false) }
     var aiExplanation by remember { mutableStateOf<String?>(null) }
     var isAiAnalyzing by remember { mutableStateOf(false) }
+    var showFileInfo by remember { mutableStateOf(false) }
 
     var selectedPenColor by remember { mutableStateOf(Color.Red) }
     var showColorPicker by remember { mutableStateOf(false) }
@@ -187,6 +184,18 @@ fun ReaderScreen(
         val s = seconds % 60
         return "%02d:%02d:%02d".format(h, m, s)
     }
+
+    fun getReadableFileSize(uri: Uri, context: Context): String {
+        return try {
+            val pfd = context.contentResolver.openFileDescriptor(uri, "r")
+            val size = pfd?.statSize ?: 0L
+            pfd?.close()
+            if (size < 1024) "$size B"
+            else if (size < 1024 * 1024) "${size / 1024} KB"
+            else "%.2f MB".format(size / (1024.0 * 1024.0))
+        } catch (e: Exception) { "Unknown" }
+    }
+
     fun speakCurrentSentence(engine: TextToSpeech?, list: List<String>, index: Int) {
         if (engine != null && index in list.indices) {
             val params = Bundle()
@@ -591,6 +600,8 @@ fun ReaderScreen(
                         context.startActivity(Intent.createChooser(intent, "Share PDF"))
                     }
 
+                    ReaderToolIcon(Icons.Default.Help, "File Info", currentTextColor) { showFileInfo = !showFileInfo }
+
                     // --- ZOOM TOOLS ---
                     VerticalDivider(modifier = Modifier.padding(vertical = 12.dp), color = currentTextColor.copy(alpha = 0.2f))
                     
@@ -855,6 +866,11 @@ fun ReaderScreen(
                             }
                         }
                         
+                        // File Info Toggle
+                        ReaderToolIcon(Icons.Default.Help, "File Info", Color.White) {
+                            showFileInfo = !showFileInfo
+                        }
+
                         // Read Aloud Toggle
                         ReaderToolIcon(
                             icon = when (speechState) {
@@ -1044,6 +1060,15 @@ fun ReaderScreen(
         explanation = aiExplanation,
         isAnalyzing = isAiAnalyzing,
         onDismiss = { aiExplanation = null },
+        currentTextColor = currentTextColor
+    )
+
+    FileInfoOverlay(
+        fileName = fileName,
+        fileSize = getReadableFileSize(uri, context),
+        folderPath = folderPath,
+        isVisible = showFileInfo,
+        onDismiss = { showFileInfo = false },
         currentTextColor = currentTextColor
     )
     
@@ -1247,4 +1272,62 @@ fun PdfPageItem(renderer: PdfRenderer?, pageIndex: Int, isFullScreen: Boolean, i
 @Composable
 fun ReaderToolIcon(icon: ImageVector, description: String, tint: Color, onClick: () -> Unit) {
     IconButton(onClick = onClick) { Icon(icon, description, tint = tint, modifier = Modifier.size(22.dp)) }
+}
+
+@Composable
+fun FileInfoOverlay(
+    fileName: String,
+    fileSize: String,
+    folderPath: String,
+    isVisible: Boolean,
+    onDismiss: () -> Unit,
+    currentTextColor: Color
+) {
+    AnimatedVisibility(
+        visible = isVisible,
+        enter = fadeIn() + slideInVertically { it },
+        exit = fadeOut() + slideOutVertically { it },
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.BottomStart) {
+            Box(
+                modifier = Modifier
+                    .padding(bottom = 64.dp) // Lift it above bottom bar
+                    .widthIn(max = 300.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .border(1.dp, currentTextColor.copy(alpha = 0.2f), RoundedCornerShape(16.dp))
+                    .clickable { onDismiss() }
+            ) {
+                // Background layer with blur
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .blur(15.dp) // Glassmorphism effect
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f))
+                )
+                
+                // Content layer (Clear text)
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "File Info",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = currentTextColor,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(text = "Title: $fileName", color = currentTextColor.copy(alpha = 0.9f), fontSize = 13.sp)
+                    Text(text = "Size: $fileSize", color = currentTextColor.copy(alpha = 0.7f), fontSize = 12.sp)
+                    Text(text = "Path: $folderPath", color = currentTextColor.copy(alpha = 0.7f), fontSize = 12.sp)
+                    
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "❌\uFE0F",
+                        fontSize = 10.sp,
+                        color = currentTextColor.copy(alpha = 0.4f),
+                        fontStyle = FontStyle.Italic
+                    )
+                }
+            }
+        }
+    }
 }

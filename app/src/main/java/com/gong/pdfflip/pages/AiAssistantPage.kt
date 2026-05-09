@@ -87,7 +87,7 @@ fun AiExplanationOverlay(
             NeumorphicCard {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
                 Spacer(Modifier.height(8.dp))
-                Text("AI is analyzing...", color = currentTextColor)
+                Text("AI analyzing...", color = currentTextColor)
             }
         }
     }

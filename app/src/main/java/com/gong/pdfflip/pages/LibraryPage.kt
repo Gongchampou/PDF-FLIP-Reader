@@ -969,33 +969,49 @@ fun LibraryScreen(
         ) { innerPadding ->
             Column(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
                 Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    LazyRow(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, contentPadding = PaddingValues(start = 16.dp, end = 8.dp)) {
-                        item {
-                            FilterChip(
-                                selected = selectedFilterTag == null,
-                                onClick = { selectedFilterTag = null },
-                                label = { Text("All") },
-                                colors = FilterChipDefaults.filterChipColors(selectedLabelColor = MaterialTheme.colorScheme.onBackground, labelColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f))
-                            )
+                    if (currentPath == "/") {
+                        LazyRow(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, contentPadding = PaddingValues(start = 16.dp, end = 8.dp)) {
+                            item {
+                                FilterChip(
+                                    selected = selectedFilterTag == null,
+                                    onClick = { selectedFilterTag = null },
+                                    label = { Text("All") },
+                                    colors = FilterChipDefaults.filterChipColors(selectedLabelColor = MaterialTheme.colorScheme.onBackground, labelColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f))
+                                )
+                            }
+                            items(availableTags) { tagString ->
+                                val tagName = tagString.split("|")[0]
+                                val tagColor = tagToColorMap[tagName] ?: getTagColor(tagName)
+                                FilterChip(
+                                    selected = selectedFilterTag == tagName,
+                                    onClick = { selectedFilterTag = if (selectedFilterTag == tagName) null else tagName },
+                                    label = { Text(tagName) },
+                                    colors = FilterChipDefaults.filterChipColors(selectedLabelColor = Color.White, selectedContainerColor = tagColor, labelColor = tagColor.copy(alpha = 0.8f)),
+                                    border = FilterChipDefaults.filterChipBorder(enabled = true, selected = selectedFilterTag == tagName, borderColor = tagColor.copy(alpha = 0.5f))
+                                )
+                            }
                         }
-                        items(availableTags) { tagString ->
-                            val tagName = tagString.split("|")[0]
-                            val tagColor = tagToColorMap[tagName] ?: getTagColor(tagName)
-                            FilterChip(
-                                selected = selectedFilterTag == tagName,
-                                onClick = { selectedFilterTag = if (selectedFilterTag == tagName) null else tagName },
-                                label = { Text(tagName) },
-                                colors = FilterChipDefaults.filterChipColors(selectedLabelColor = Color.White, selectedContainerColor = tagColor, labelColor = tagColor.copy(alpha = 0.8f)),
-                                border = FilterChipDefaults.filterChipBorder(enabled = true, selected = selectedFilterTag == tagName, borderColor = tagColor.copy(alpha = 0.5f))
-                            )
-                        }
+                    } else {
+                        // Display the folder path so you know exactly where you are inside sub-folders
+                        Text(
+                            text = currentPath.removePrefix("/"),
+                            modifier = Modifier.weight(1f).padding(horizontal = 16.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
+
                     Row(modifier = Modifier.padding(end = 4.dp), horizontalArrangement = Arrangement.spacedBy((-4).dp), verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = { showCreateFolderDialog = true }, modifier = Modifier.size(36.dp)) {
                             Icon(Icons.Default.CreateNewFolder, null, tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f), modifier = Modifier.size(20.dp))
                         }
-                        IconButton(onClick = { showCreateTagDialog = true }, modifier = Modifier.size(36.dp)) {
-                            Icon(Icons.Default.AddCircle, null, tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f), modifier = Modifier.size(20.dp))
+                        if (currentPath == "/") {
+                            IconButton(onClick = { showCreateTagDialog = true }, modifier = Modifier.size(36.dp)) {
+                                Icon(Icons.Default.AddCircle, null, tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f), modifier = Modifier.size(20.dp))
+                            }
                         }
                     }
                 }

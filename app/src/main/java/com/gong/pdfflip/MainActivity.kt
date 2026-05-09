@@ -184,6 +184,7 @@ fun MainAppNavigation(
     // Selected PDF URI and page
     var selectedUri by remember { mutableStateOf<Uri?>(null) }
     var selectedBookName by remember { mutableStateOf<String?>(null) }
+    var selectedBookPath by remember { mutableStateOf("/") }
     var startPage by remember { mutableIntStateOf(0) }
     var sourceUriStr by remember { mutableStateOf<String?>(null) }
     var currentPath by rememberSaveable { mutableStateOf("/") }
@@ -201,6 +202,7 @@ fun MainAppNavigation(
                 onBookClick = { book ->
                     selectedUri = book.uri
                     selectedBookName = book.name
+                    selectedBookPath = book.folderPath
                     startPage = book.currentPage
                     sourceUriStr = book.sourceUri
                     currentScreen = Screen.Reader
@@ -216,6 +218,7 @@ fun MainAppNavigation(
                 ReaderScreen(
                     uri = uri, 
                     fileName = selectedBookName ?: uri.lastPathSegment ?: "Unknown",
+                    folderPath = selectedBookPath,
                     sourceUriStr = sourceUriStr,
                     initialPage = startPage,
                     initialPageModeIndex = pageModeIndex,
