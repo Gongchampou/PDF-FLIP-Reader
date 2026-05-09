@@ -9,11 +9,11 @@ package com.gong.pdfflip.pages
  * 3. App Info: Detailed version and description of PDF Flip.
  */
 /** Reminder Version Update Number when every time update
- * Code Line = 249 : val currentVersion = "1.0.1"
+ * Code Line = 342 : val currentVersion = "1.0.2"
  * In GitHub: Simply create a new "Release". The app checks the "Tag name" of the latest release.
  * even in build.gradle.kts (:app)
    - Line 18 = versionCode = 2 (increase the no. eg 3,4,5,6,7,.....)
-   - Line 19 = versionName = "1.0.1"( increase the number )
+   - Line 19 = versionName = "1.0.2"( increase the number )
  */
 
 import android.net.Uri
@@ -339,7 +339,8 @@ fun SettingsScreen(
     // Update State
     var isCheckingUpdate by remember { mutableStateOf(false) }
     var updateMessage by remember { mutableStateOf<String?>(null) }
-    val currentVersion = "1.0.1" // Current App Version
+//verion
+    val currentVersion = "1.0.2" // Current App Version
 
     fun checkForUpdates() {
         isCheckingUpdate = true

@@ -8,22 +8,20 @@ Welcome to **PDFFlip**! This app is your digital bookshelf. It helps you keep yo
 
 -   **Smart Library**: Automatically finds your PDFs and lets you tag them with colors.
 -   **Folders inside Folders 📂**: Just like on your computer, you can create folders for your books!
--   **Backup & Share 📤**: Export your entire library—including all your folders, PDF files, and colorful categories—into a single file to share with friends or move to a new device.
--   **Unified Item Counts 🔢**: Each folder shows a single number in the bottom corner representing the total count of folders and files inside.
--   **Intelligent Text Contrast 🌓**: Library cards and folder titles automatically switch between black and white text to ensure they are always readable.
--   **Smart Navigation 📍**: When you go inside folders, the app shows the folder path (like `folder/subfolder`) so you always know where you are.
--   **Modern File Info ℹ️**: Tap the question mark icon in the reader bottom bar to see the file title, size, and folder path in a beautiful blurred overlay.
+-   **Long-Term Memory 🧠**: The app remembers where you left off on up to **1,000 different books**.
+-   **Progress Tracker 📊**: Every book card shows a progress bar and percentage, so you know how much you've read.
+-   **Backup & Share 📤**: Export your entire library—including all your folders, PDF files, and colorful categories—into a single file.
 -   **AI Assistant 🤖**: Circle any part of a page and let AI explain it to you instantly!
--   **Space-Saving Settings ⚙️**: Keep your app clean by hiding advanced AI settings and backup hints until you need them.
+-   **Smart Renaming ✏️**: Rename any book in the app! It renames the physical file on your phone and automatically moves your progress and colors to the new name.
+-   **Modern File Info ℹ️**: Tap the question mark icon in the reader to see file title, size, and location in a beautiful blurred overlay.
 
 ---
 
 ## 📂 Where are my files? (Device Storage)
 
-The app creates a special folder on your phone so you can easily find your books:
+The app creates a special folder on your phone:
 - **Location**: `Internal Storage > Documents > PDF Flip`
-- **Folders**: Any folders you create in the app will appear here too.
-- **Adding Books**: You can copy your PDFs directly into this `PDF Flip` folder, and PDFFlip will see them!
+- **Adding Books**: Simply copy your PDFs into this folder, and they will automatically appear in your Library!
 
 ---
 
@@ -32,39 +30,33 @@ The app creates a special folder on your phone so you can easily find your books
 If you are new to coding, think of the app like a house with different rooms:
 
 ### 🏠 The Architecture (File Sizes)
-- **`MainActivity.kt`** (257 lines): The **Front Door**. This is the first thing that runs. It decides which room (page) you are in.
-- **`LibraryPage.kt`** (1254 lines): The **Bookshelf**. It manages all your files and folders.
-- **`ReaderPage.kt`** (1334 lines): The **Reading Chair**. It handles showing your PDF and the **Modern File Info Overlay**.
-- **`SettingsPage.kt`** (1007 lines): The **Control Panel**. Where you change the theme, set up **AI**, and **Backup** your library.
-- **`AiAssistantPage.kt`** (180 lines): The **AI Brain**. This is where the app talks to Google Gemini.
+- **`MainActivity.kt`** (243 lines): The **Front Door**. It manages which screen you are looking at (Library, Reader, or Settings).
+- **`LibraryPage.kt`** (1,579 lines): The **Bookshelf**. It scans your folders for PDFs and remembers your tags and folder structure.
+- **`ReaderPage.kt`** (1,273 lines): The **Reading Chair**. This is where the magic happens! It renders the PDF, handles page flips, and saves your progress.
+- **`SettingsPage.kt`** (966 lines): The **Control Panel**. Where you change the theme, set up AI, and manage your backups.
+- **`AiAssistantPage.kt`** (172 lines): The **AI Brain**. This is where the app talks to Google Gemini to explain parts of your book.
 
-### 🔍 Deep Dive into the Code (Where things are)
+### 🔍 Deep Dive: How the "Resume Reading" Works 📍
 
-#### 1. The Backup System 🚚
-- **BackupUtils.kt**: The "Moving Truck". This utility handles zipping up your entire `PDF Flip` folder and all your settings so you can share them.
-- **SettingsPage.kt (Line 118)**: This is where the **Export/Import** logic lives. It uses icon-only buttons (Cloud Upload/Download) to save or open your library backup files.
-- **SettingsPage.kt (Line 598)**: The **Hint Toggle**. This code adds a small information icon that shows or hides the backup instructions to save space.
+Have you ever wondered how the app remembers you were on page 42 of a book you haven't opened in weeks, even if it was buried deep in folders? Here is the simple explanation:
 
-#### 2. The AI Integration 🤖
-- **AiAssistantPage.kt (Line 124)**: **`performAiAnalysis()`** is the logic that sends your image to Google Gemini.
-- **ReaderPage.kt (Line 1177)**: **`ReaderPageContent`** is where the page is drawn.
-- **SettingsPage.kt (Line 774)**: The **Collapsible AI Section**.
+1.  **Unique Digital IDs**: Instead of just using the book's name, the app uses its **Full Path** (like `/Documents/School/History.pdf`). This means even if you have two books named "Chapter 1", the app won't get them confused!
+2.  **Saving the Spot**: Every time you flip a page in **`ReaderPage.kt`**, the app writes a note in `recent_data.txt`: *"Full Path | Time | Current Page | Total Pages"*.
+3.  **The 40-Book Display**: The "Recent Activity" sidebar now shows your last **40 books**, so you can jump back into any of your recent projects quickly.
+4.  **Global History 🌍**: You can now access your "Recent Activity" from **any folder**. Look for the History icon in the top-right corner!
+5.  **Smart Navigation 📍**: If you open a book from your history, PDFFlip automatically remembers which folder it belongs to. When you press "Back," you'll go straight to that folder, not the home screen.
+6.  **The 1,000 Book Memory**: Even if a book falls off the "Recent" list, PDFFlip still keeps its progress in its 1,000-note long-term memory.
+7.  **Correct Sorting**: PDFFlip uses **Unix Timestamps** (the exact millisecond you opened a book) to make sure your most recently read books always stay at the very top of the list.
+8.  **Reset Feature 🗑️**: If you want to start over, you can tap the **Delete Sweep** icon in the "Recent Activity" sidebar. This instantly wipes the memory for every book, making them disappear from the recent list and clearing all progress bars.
 
-#### 3. The Bookshelf (`LibraryPage.kt`)
-- **Line 225**: **`scanLibrary()`** is the "Eyes" of the app. It looks for books in your folders.
-- **Line 111**: **`getContrastColor()`** is a smart helper that makes sure text is either black or white depending on the background.
+### 🛠️ Key Coding Concepts
 
-#### 4. The Reading Room (`ReaderPage.kt`)
-- **Line 95**: The `ReaderScreen` starts. It takes a PDF and opens it for you.
-- **Line 1277**: **`FileInfoOverlay`** creates the beautiful blurred box that shows your file's details.
+-   **@Composable**: Think of these as LEGO bricks. We build a "Book Card" brick and a "Top Bar" brick, then snap them together to make a screen.
+-   **State**: This is the app's "Short-Term Memory". If you type something in the search bar, the "State" remembers those letters so it can filter your books.
+-   **LaunchedEffect**: This is like a "Trigger". We use it to say: *"When the user flips a page, trigger the code that saves their progress to the file."*
 
 ---
 
-## 🛠️ Concepts to Know
+### 💁‍♂️💁‍♀️ Let's contribute and develop this "PDF Flip" app for the community of students who need a high-quality, free way to study.
 
--   **Composable (@Composable)**: Think of these as LEGO bricks. You build a "Button" and a "Text Box" separately, then snap them together to build a screen.
--   **State**: This is how the app "remembers" things. For example, if you toggle "Dark Mode," the app remembers to stay dark.
--   **Modifier**: These are like adjectives. You can say: "Make this button **red**," "**large**," or "**draggable**."
-
-### 💁‍♂️💁‍ Let contribute and developed his "PDF Flip" app for community of student who really i need of freemium for there work style.
 Happy Reading! 📖🚀

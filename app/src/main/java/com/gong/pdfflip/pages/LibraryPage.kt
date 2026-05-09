@@ -177,6 +177,7 @@ fun LibraryScreen(
     var selectedFilterTag by remember { mutableStateOf<String?>(null) }
     var showCreateTagDialog by remember { mutableStateOf(false) }
     var showAssignTagDialog by remember { mutableStateOf<Book?>(null) }
+    var showAssignFolderTagDialog by remember { mutableStateOf<Folder?>(null) }
 
     // Deletion states
     var bookToDelete by remember { mutableStateOf<Book?>(null) }
@@ -190,6 +191,9 @@ fun LibraryScreen(
     // Import Summary states
     val importResults = remember { mutableStateListOf<ImportResult>() }
     var showImportSummary by remember { mutableStateOf(false) }
+
+    // Clear Recent Data states
+    var showClearRecentDialog by remember { mutableStateOf(false) }
 
     // Map of Tag Name to its Color object
     val tagToColorMap = remember(availableTags.toList()) {
@@ -216,7 +220,10 @@ fun LibraryScreen(
             val tagsFile = File(context.filesDir, "available_tags.txt")
             val foldersFile = File(context.filesDir, "library_folders.txt")
             
-            metadataFile.writeText(libraryBooks.joinToString("\n") { "${it.name}|${it.tag ?: ""}|${it.sourceUri ?: ""}|${it.folderPath}|${it.cardColor ?: ""}" })
+            metadataFile.writeText(libraryBooks.joinToString("\n") { 
+                val pathId = if (it.folderPath == "/") it.name else "${it.folderPath}/${it.name}"
+                "$pathId|${it.tag ?: ""}|${it.sourceUri ?: ""}|${it.folderPath}|${it.cardColor ?: ""}" 
+            })
             tagsFile.writeText(availableTags.joinToString("\n"))
             foldersFile.writeText(libraryFolders.joinToString("\n") { "${it.name}|${it.path}|${it.parentPath}|${it.color ?: ""}" })
         }
@@ -273,28 +280,46 @@ fun LibraryScreen(
             context.contentResolver.query(queryUri, projection, selection, selectionArgs, null)?.use { cursor ->
                 val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
                 val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME)
+                val pathColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.RELATIVE_PATH)
                 
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idColumn)
                     val name = cursor.getString(nameColumn)
+                    val relPath = cursor.getString(pathColumn) ?: ""
+                    
+                    // Extract the folder part after "Documents/PDF Flip"
+                    // Documents/PDF Flip/Folder/ -> /Folder
+                    val cleanPath = when {
+                        relPath.contains("Documents/PDF Flip/") -> {
+                            val suffix = relPath.substringAfter("Documents/PDF Flip/")
+                            if (suffix.isEmpty()) "/" else "/" + suffix.trim('/')
+                        }
+                        else -> "/"
+                    }
+                    
                     val contentUri = Uri.withAppendedPath(collection, id.toString())
-                    loadedBooks.add(Book(name, contentUri, sourceUri = contentUri.toString()))
+                    loadedBooks.add(Book(name, contentUri, sourceUri = contentUri.toString(), folderPath = cleanPath))
                 }
             }
 
             // Load tags and folder mapping
             val tagMap = mutableMapOf<String, String>()
-            val folderMap = mutableMapOf<String, String>()
             val colorMap = mutableMapOf<String, String>()
-            val progressMap = mutableMapOf<String, Pair<Int, Int>>()
+            val progressMap = mutableMapOf<String, Triple<Int, Int, Long>>()
             
             val metadataFile = File(context.filesDir, "library_tags.txt")
             if (metadataFile.exists()) {
                 metadataFile.readLines().forEach { line ->
                     val parts = line.split("|")
-                    if (parts.size >= 2) tagMap[parts[0]] = parts[1]
-                    if (parts.size >= 4) folderMap[parts[0]] = parts[3]
-                    if (parts.size >= 5) colorMap[parts[0]] = parts[4]
+                    // Format: UniqueId|Tag|SourceUri|FolderPath|Color
+                    // UniqueId is pathId (folderPath + name)
+                    if (parts.size >= 5) {
+                        val pathId = parts[0]
+                        tagMap[pathId] = parts[1]
+                        colorMap[pathId] = parts[4]
+                    } else if (parts.size == 2) { // Backward compatibility
+                        tagMap[parts[0]] = parts[1]
+                    }
                 }
             }
 
@@ -303,23 +328,26 @@ fun LibraryScreen(
                 recentFile.readLines().forEach { line ->
                     val parts = line.split("|")
                     if (parts.size >= 4) {
-                        val name = parts[0]
+                        val pathId = parts[0]
+                        val time = parts[1].toLongOrNull() ?: 0L
                         val page = parts[2].toIntOrNull() ?: 0
                         val total = parts[3].toIntOrNull() ?: 0
-                        progressMap[name] = page to total
+                        progressMap[pathId] = Triple(page, total, time)
                     }
                 }
             }
 
             // Update loaded books with metadata
             val finalBooks = loadedBooks.map { book ->
-                val progress = progressMap[book.name]
+                val pathId = if (book.folderPath == "/") book.name else "${book.folderPath}/${book.name}"
+                val progress = progressMap[pathId]
+                
                 book.copy(
-                    tag = tagMap[book.name],
-                    folderPath = folderMap[book.name] ?: "/",
-                    cardColor = colorMap[book.name],
+                    tag = tagMap[pathId] ?: tagMap[book.name], // Try pathId first, then name for old tags
+                    cardColor = colorMap[pathId] ?: colorMap[book.name],
                     currentPage = progress?.first ?: 0,
-                    totalPages = progress?.second ?: 0
+                    totalPages = progress?.second ?: 0,
+                    lastAccessed = progress?.third ?: 0L
                 )
             }
             
@@ -347,9 +375,14 @@ fun LibraryScreen(
                 libraryFolders.clear()
                 libraryFolders.addAll(loadedFolders)
                 
-                // Refresh recent list based on time
+                // Refresh recent list based on time (Only show books actually opened)
                 recentBooks.clear()
-                recentBooks.addAll(finalBooks.sortedByDescending { it.lastAccessed }.take(10))
+                recentBooks.addAll(
+                    finalBooks
+                        .filter { it.lastAccessed > 0 }
+                        .sortedByDescending { it.lastAccessed }
+                        .take(40)
+                )
             }
         }
     }
@@ -373,14 +406,33 @@ fun LibraryScreen(
     fun updateRecent(book: Book, page: Int = 0, total: Int = 0) {
         val currentTime = System.currentTimeMillis()
         val updatedBook = book.copy(lastAccessed = currentTime, currentPage = page, totalPages = if (total > 0) total else book.totalPages)
-        recentBooks.removeAll { it.name == book.name }
-        recentBooks.add(0, updatedBook)
-        if (recentBooks.size > 10) recentBooks.removeRange(10, recentBooks.size)
         
-        val dataToSave = recentBooks.toList()
+        // Use folderPath + fileName for unique identification
+        val pathId = if (book.folderPath == "/") book.name else "${book.folderPath}/${book.name}"
+        
+        // Remove existing entry for this unique book path to avoid duplicates
+        recentBooks.removeAll { 
+            val otherPathId = if (it.folderPath == "/") it.name else "${it.folderPath}/${it.name}"
+            otherPathId == pathId 
+        }
+        recentBooks.add(0, updatedBook)
+        if (recentBooks.size > 40) recentBooks.removeRange(40, recentBooks.size)
+        
         scope.launch(Dispatchers.IO) {
             val recentFile = File(context.filesDir, "recent_data.txt")
-            recentFile.writeText(dataToSave.joinToString("\n") { "${it.name}|${it.lastAccessed}|${it.currentPage}|${it.totalPages}" })
+            val lines = if (recentFile.exists()) recentFile.readLines().toMutableList() else mutableListOf()
+            
+            // Remove old entry from file too
+            val existingIndex = lines.indexOfFirst { it.startsWith("$pathId|") }
+            if (existingIndex != -1) {
+                lines.removeAt(existingIndex)
+            }
+            
+            // Add fresh entry at top
+            lines.add(0, "$pathId|$currentTime|$page|${if (total > 0) total else book.totalPages}")
+            
+            // Save up to 1000 items in the data file for long-term memory
+            recentFile.writeText(lines.take(1000).joinToString("\n"))
         }
     }
 
@@ -391,8 +443,12 @@ fun LibraryScreen(
                 context.contentResolver.delete(book.uri, null, null)
                 
                 withContext(Dispatchers.Main) {
+                    val pathId = if (book.folderPath == "/") book.name else "${book.folderPath}/${book.name}"
                     libraryBooks.remove(book)
-                    recentBooks.removeAll { it.name == book.name }
+                    recentBooks.removeAll { 
+                        val otherPathId = if (it.folderPath == "/") it.name else "${it.folderPath}/${it.name}"
+                        otherPathId == pathId 
+                    }
                     saveLibraryMetadata()
                     Toast.makeText(context, "${book.name.substringBeforeLast(".")} deleted from storage", Toast.LENGTH_SHORT).show()
                     bookToDelete = null
@@ -402,6 +458,194 @@ fun LibraryScreen(
                 e.printStackTrace()
                 withContext(Dispatchers.Main) {
                     Toast.makeText(context, "Delete failed: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    fun deleteFolder(folder: Folder) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val targetPath = folder.path
+                
+                // 1. Delete all books in this folder and subfolders from physical storage
+                val booksInFolder = libraryBooks.filter { it.folderPath.startsWith(targetPath) }
+                booksInFolder.forEach { book ->
+                    try {
+                        context.contentResolver.delete(book.uri, null, null)
+                    } catch (e: Exception) { e.printStackTrace() }
+                }
+
+                // 2. Delete the physical directory from filesystem
+                val documentsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+                val baseDir = File(documentsDir, "PDF Flip")
+                val folderDir = File(baseDir, folder.path.substring(1)) // Remove leading /
+                if (folderDir.exists()) {
+                    folderDir.deleteRecursively()
+                }
+
+                withContext(Dispatchers.Main) {
+                    // 3. Remove from UI lists
+                    libraryBooks.removeAll { it.folderPath.startsWith(targetPath) }
+                    libraryFolders.removeAll { it.path.startsWith(targetPath) }
+                    
+                    // Also cleanup recent list
+                    recentBooks.removeAll { it.folderPath.startsWith(targetPath) }
+                    
+                    saveLibraryMetadata()
+                    Toast.makeText(context, "Folder \"${folder.name}\" and its contents deleted", Toast.LENGTH_SHORT).show()
+                    folderToDelete = null
+                    userInputCode = ""
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "Folder delete failed: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    fun renameBook(book: Book, newName: String) {
+        val sanitizedNewName = if (newName.lowercase().endsWith(".pdf")) newName else "$newName.pdf"
+        
+        scope.launch(Dispatchers.IO) {
+            try {
+                // 1. Rename on disk via MediaStore
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, sanitizedNewName)
+                }
+                context.contentResolver.update(book.uri, values, null, null)
+
+                withContext(Dispatchers.Main) {
+                    val oldPathId = if (book.folderPath == "/") book.name else "${book.folderPath}/${book.name}"
+                    val newPathId = if (book.folderPath == "/") sanitizedNewName else "${book.folderPath}/$sanitizedNewName"
+                    
+                    // 2. Update libraryBooks
+                    val bookIndex = libraryBooks.indexOfFirst { it.name == book.name && it.folderPath == book.folderPath }
+                    if (bookIndex != -1) {
+                        libraryBooks[bookIndex] = libraryBooks[bookIndex].copy(name = sanitizedNewName)
+                    }
+
+                    // 3. Update recentBooks
+                    val recentIndex = recentBooks.indexOfFirst { 
+                        val pId = if (it.folderPath == "/") it.name else "${it.folderPath}/${it.name}"
+                        pId == oldPathId 
+                    }
+                    if (recentIndex != -1) {
+                        recentBooks[recentIndex] = recentBooks[recentIndex].copy(name = sanitizedNewName)
+                    }
+
+                    // 4. Migrate metadata file logic
+                    scope.launch(Dispatchers.IO) {
+                        // Update recent_data.txt
+                        val recentFile = File(context.filesDir, "recent_data.txt")
+                        if (recentFile.exists()) {
+                            val lines = recentFile.readLines().map { line ->
+                                if (line.startsWith("$oldPathId|")) {
+                                    val parts = line.split("|").toMutableList()
+                                    parts[0] = newPathId
+                                    parts.joinToString("|")
+                                } else line
+                            }
+                            recentFile.writeText(lines.joinToString("\n"))
+                        }
+                        
+                        // library_tags.txt update is handled by saveLibraryMetadata() call
+                        withContext(Dispatchers.Main) {
+                            saveLibraryMetadata()
+                            Toast.makeText(context, "Renamed to $sanitizedNewName", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "Rename failed: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    fun renameFolder(folder: Folder, newName: String) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val oldPath = folder.path
+                val newPath = if (folder.parentPath == "/") "/$newName" else "${folder.parentPath}/$newName"
+                
+                // 1. Rename physical folder
+                val documentsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+                val baseDir = File(documentsDir, "PDF Flip")
+                val oldFolderDir = File(baseDir, oldPath.substring(1))
+                val newFolderDir = File(baseDir, newPath.substring(1))
+                
+                if (oldFolderDir.exists()) {
+                    val success = oldFolderDir.renameTo(newFolderDir)
+                    if (!success) throw Exception("Physical rename failed")
+                }
+
+                withContext(Dispatchers.Main) {
+                    // 2. Update libraryFolders
+                    val folderIndex = libraryFolders.indexOfFirst { it.path == oldPath }
+                    if (folderIndex != -1) {
+                        libraryFolders[folderIndex] = libraryFolders[folderIndex].copy(name = newName, path = newPath)
+                    }
+                    
+                    // 3. Update sub-folders
+                    val allSubFolders = libraryFolders.filter { it.path.startsWith("$oldPath/") }
+                    allSubFolders.forEach { sub ->
+                        val idx = libraryFolders.indexOfFirst { it.path == sub.path }
+                        if (idx != -1) {
+                            val suffix = sub.path.removePrefix(oldPath)
+                            val parentSuffix = sub.parentPath.removePrefix(oldPath)
+                            libraryFolders[idx] = libraryFolders[idx].copy(
+                                path = newPath + suffix,
+                                parentPath = newPath + parentSuffix
+                            )
+                        }
+                    }
+
+                    // 4. Update books
+                    val booksToMigrate = libraryBooks.filter { it.folderPath.startsWith(oldPath) }
+                    booksToMigrate.forEach { book ->
+                        val idx = libraryBooks.indexOfFirst { it.uri == book.uri }
+                        if (idx != -1) {
+                            val suffix = book.folderPath.removePrefix(oldPath)
+                            libraryBooks[idx] = libraryBooks[idx].copy(folderPath = newPath + suffix)
+                        }
+                    }
+                    
+                    // 5. Update recentBooks list in memory
+                    recentBooks.forEachIndexed { i, book ->
+                        if (book.folderPath.startsWith(oldPath)) {
+                            val suffix = book.folderPath.removePrefix(oldPath)
+                            recentBooks[i] = book.copy(folderPath = newPath + suffix)
+                        }
+                    }
+
+                    // 6. Update Recent Activity and Metadata Files
+                    scope.launch(Dispatchers.IO) {
+                        // Update recent_data.txt
+                        val recentFile = File(context.filesDir, "recent_data.txt")
+                        if (recentFile.exists()) {
+                            val lines = recentFile.readLines().map { line ->
+                                if (line.startsWith("$oldPath/")) {
+                                    line.replaceFirst(oldPath, newPath)
+                                } else line
+                            }
+                            recentFile.writeText(lines.joinToString("\n"))
+                        }
+                        
+                        withContext(Dispatchers.Main) {
+                            saveLibraryMetadata()
+                            Toast.makeText(context, "Folder renamed to $newName", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "Folder rename failed: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -676,11 +920,39 @@ fun LibraryScreen(
 
     // DIALOG: Customize Book (Tag & Color)
     if (showAssignTagDialog != null) {
+        var editName by remember(showAssignTagDialog) { mutableStateOf(showAssignTagDialog!!.name.substringBeforeLast(".")) }
+        var selectedTag by remember(showAssignTagDialog) { mutableStateOf(showAssignTagDialog!!.tag) }
+        var selectedCardColor by remember(showAssignTagDialog) { mutableStateOf(showAssignTagDialog!!.cardColor) }
+
         AlertDialog(
             onDismissRequest = { showAssignTagDialog = null },
-            title = { Text("Customize \"${showAssignTagDialog!!.name.substringBeforeLast(".")}\"") },
+            title = { Text("Customize Book") },
             text = {
                 Column {
+                    Text("Rename File:", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    BasicTextField(
+                        value = editName,
+                        onValueChange = { editName = it },
+                        textStyle = LocalTextStyle.current.copy(color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp),
+                        singleLine = true,
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        decorationBox = { innerTextField ->
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(40.dp)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 12.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                if (editName.isEmpty()) Text("Enter name...", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), fontSize = 14.sp)
+                                innerTextField()
+                            }
+                        }
+                    )
+                    Spacer(Modifier.height(16.dp))
                     Text("Card Color:", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(8.dp))
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -691,22 +963,15 @@ fun LibraryScreen(
                                     .size(32.dp)
                                     .clip(CircleShape)
                                     .background(defaultColor)
-                                    .clickable {
-                                        val book = showAssignTagDialog!!
-                                        val index = libraryBooks.indexOfFirst { it.name == book.name }
-                                        if (index != -1) {
-                                            libraryBooks[index] = book.copy(cardColor = null)
-                                            saveLibraryMetadata()
-                                        }
-                                    }
+                                    .clickable { selectedCardColor = null }
                                     .border(
-                                        width = if (showAssignTagDialog!!.cardColor == null) 2.dp else 0.dp,
+                                        width = if (selectedCardColor == null) 2.dp else 0.dp,
                                         color = MaterialTheme.colorScheme.onSurface,
                                         shape = CircleShape
                                     ),
                                 contentAlignment = Alignment.Center
                             ) {
-                                if (showAssignTagDialog!!.cardColor == null) Icon(Icons.Default.Check, null, modifier = Modifier.size(16.dp))
+                                if (selectedCardColor == null) Icon(Icons.Default.Check, null, modifier = Modifier.size(16.dp))
                             }
                         }
                         items(tagColorOptions) { hex ->
@@ -716,22 +981,15 @@ fun LibraryScreen(
                                     .size(32.dp)
                                     .clip(CircleShape)
                                     .background(color)
-                                    .clickable {
-                                        val book = showAssignTagDialog!!
-                                        val index = libraryBooks.indexOfFirst { it.name == book.name }
-                                        if (index != -1) {
-                                            libraryBooks[index] = book.copy(cardColor = hex)
-                                            saveLibraryMetadata()
-                                        }
-                                    }
+                                    .clickable { selectedCardColor = hex }
                                     .border(
-                                        width = if (showAssignTagDialog!!.cardColor == hex) 2.dp else 0.dp,
+                                        width = if (selectedCardColor == hex) 2.dp else 0.dp,
                                         color = MaterialTheme.colorScheme.onSurface,
                                         shape = CircleShape
                                     ),
                                 contentAlignment = Alignment.Center
                             ) {
-                                if (showAssignTagDialog!!.cardColor == hex) Icon(Icons.Default.Check, null, modifier = Modifier.size(16.dp), tint = Color.White)
+                                if (selectedCardColor == hex) Icon(Icons.Default.Check, null, modifier = Modifier.size(16.dp), tint = Color.White)
                             }
                         }
                     }
@@ -743,7 +1001,7 @@ fun LibraryScreen(
                     if (availableTags.isEmpty()) {
                         Text("No categories created yet.", color = Color.Gray, fontSize = 12.sp)
                     } else {
-                        LazyColumn(modifier = Modifier.heightIn(max = 200.dp)) {
+                        LazyColumn(modifier = Modifier.heightIn(max = 180.dp)) {
                             items(availableTags) { tagString ->
                                 val parts = tagString.split("|")
                                 val tagName = parts[0]
@@ -752,36 +1010,140 @@ fun LibraryScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clickable {
-                                            val book = showAssignTagDialog!!
-                                            val index = libraryBooks.indexOfFirst { it.name == book.name }
-                                            if (index != -1) {
-                                                libraryBooks[index] = book.copy(tag = tagName)
-                                                saveLibraryMetadata()
-                                            }
-                                            showAssignTagDialog = null
-                                        }
-                                        .padding(vertical = 12.dp)
+                                        .clickable { selectedTag = tagName }
+                                        .padding(vertical = 8.dp)
                                 ) {
-                                    RadioButton(selected = showAssignTagDialog!!.tag == tagName, onClick = null)
+                                    RadioButton(selected = selectedTag == tagName, onClick = null)
                                     Spacer(Modifier.width(8.dp))
                                     Text(tagName, color = tagColor, fontWeight = FontWeight.Medium)
                                 }
                             }
                         }
                     }
-                    TextButton(onClick = {
-                        val book = showAssignTagDialog!!
-                        val index = libraryBooks.indexOfFirst { it.name == book.name }
-                        if (index != -1) {
-                            libraryBooks[index] = book.copy(tag = null)
-                            saveLibraryMetadata()
-                        }
-                        showAssignTagDialog = null
-                    }) { Text("Clear Category", color = Color.Red) }
+                    TextButton(onClick = { selectedTag = null }) { Text("Clear Category", color = Color.Red) }
                 }
             },
-            confirmButton = { TextButton(onClick = { showAssignTagDialog = null }) { Text("Close") } }
+            confirmButton = {
+                Button(onClick = {
+                    val book = showAssignTagDialog!!
+                    
+                    // 1. Handle Rename if needed
+                    if (editName.isNotBlank() && editName != book.name.substringBeforeLast(".")) {
+                        renameBook(book, editName)
+                    }
+                    
+                    // 2. Handle Color and Tag updates
+                    val updatedBook = book.copy(tag = selectedTag, cardColor = selectedCardColor)
+                    val index = libraryBooks.indexOfFirst { it.name == book.name && it.folderPath == book.folderPath }
+                    if (index != -1) {
+                        libraryBooks[index] = updatedBook
+                        saveLibraryMetadata()
+                    }
+                    
+                    showAssignTagDialog = null
+                }) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { showAssignTagDialog = null }) { Text("Cancel") } }
+        )
+    }
+
+    // DIALOG: Customize Folder
+    if (showAssignFolderTagDialog != null) {
+        var editName by remember(showAssignFolderTagDialog) { mutableStateOf(showAssignFolderTagDialog!!.name) }
+        var selectedCardColor by remember(showAssignFolderTagDialog) { mutableStateOf(showAssignFolderTagDialog!!.color) }
+
+        AlertDialog(
+            onDismissRequest = { showAssignFolderTagDialog = null },
+            title = { Text("Customize Folder") },
+            text = {
+                Column {
+                    Text("Rename Folder:", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    BasicTextField(
+                        value = editName,
+                        onValueChange = { editName = it },
+                        textStyle = LocalTextStyle.current.copy(color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp),
+                        singleLine = true,
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        decorationBox = { innerTextField ->
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(40.dp)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 12.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                if (editName.isEmpty()) Text("Enter name...", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), fontSize = 14.sp)
+                                innerTextField()
+                            }
+                        }
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    Text("Folder Color:", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        item {
+                            val defaultColor = MaterialTheme.colorScheme.surfaceVariant
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(defaultColor)
+                                    .clickable { selectedCardColor = null }
+                                    .border(
+                                        width = if (selectedCardColor == null) 2.dp else 0.dp,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        shape = CircleShape
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (selectedCardColor == null) Icon(Icons.Default.Check, null, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                        items(tagColorOptions) { hex ->
+                            val color = Color(android.graphics.Color.parseColor(hex))
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(color)
+                                    .clickable { selectedCardColor = hex }
+                                    .border(
+                                        width = if (selectedCardColor == hex) 2.dp else 0.dp,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        shape = CircleShape
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (selectedCardColor == hex) Icon(Icons.Default.Check, null, modifier = Modifier.size(16.dp), tint = Color.White)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val folder = showAssignFolderTagDialog!!
+                    
+                    // 1. Handle Rename if needed
+                    if (editName.isNotBlank() && editName != folder.name) {
+                        renameFolder(folder, editName)
+                    }
+                    
+                    // 2. Handle Color updates
+                    val updatedFolder = folder.copy(color = selectedCardColor)
+                    val index = libraryFolders.indexOfFirst { it.path == folder.path }
+                    if (index != -1) {
+                        libraryFolders[index] = updatedFolder
+                        saveLibraryMetadata()
+                    }
+                    
+                    showAssignFolderTagDialog = null
+                }) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { showAssignFolderTagDialog = null }) { Text("Cancel") } }
         )
     }
 
@@ -817,13 +1179,8 @@ fun LibraryScreen(
                     onClick = { 
                         if (bookToDelete != null) { deleteBook(bookToDelete!!) } 
                         else if (folderToDelete != null) {
-                            val targetPath = folderToDelete!!.path
-                            libraryBooks.removeAll { it.folderPath.startsWith(targetPath) }
-                            libraryFolders.removeAll { it.path.startsWith(targetPath) }
-                            saveLibraryMetadata()
-                            folderToDelete = null
+                            deleteFolder(folderToDelete!!)
                         }
-                        userInputCode = ""
                     },
                     enabled = userInputCode == deleteConfirmCode,
                     colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
@@ -872,6 +1229,38 @@ fun LibraryScreen(
         )
     }
 
+    // DIALOG: Clear Recent Activity
+    if (showClearRecentDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearRecentDialog = false },
+            title = { Text("Reset Progress?", fontWeight = FontWeight.Bold) },
+            text = { Text("This will clear your reading progress across all books. This action cannot be undone.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch(Dispatchers.IO) {
+                            val recentFile = File(context.filesDir, "recent_data.txt")
+                            if (recentFile.exists()) recentFile.delete()
+                            
+                            withContext(Dispatchers.Main) {
+                                // Important: Instantly wipe state in current session
+                                val resetBooks = libraryBooks.map { it.copy(currentPage = 0, totalPages = 0, lastAccessed = 0L) }
+                                libraryBooks.clear()
+                                libraryBooks.addAll(resetBooks)
+                                
+                                recentBooks.clear()
+                                showClearRecentDialog = false
+                                Toast.makeText(context, "All progress cleared", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                ) { Text("Clear All Progress", color = Color.White) }
+            },
+            dismissButton = { TextButton(onClick = { showClearRecentDialog = false }) { Text("Cancel") } }
+        )
+    }
+    //recent activity area:
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -879,8 +1268,19 @@ fun LibraryScreen(
                 drawerContainerColor = MaterialTheme.colorScheme.background,
                 modifier = Modifier.width(300.dp)
             ) {
-                Spacer(Modifier.height(48.dp))
-                Text("Recent Activity", modifier = Modifier.padding(16.dp), fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+                Spacer(Modifier.height(8.dp))//this can be reduces, if we want the spaccer of the top tpo reduce.
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Recent Activity", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+                    if (recentBooks.isNotEmpty()) {
+                        IconButton(onClick = { showClearRecentDialog = true }) {
+                            Icon(Icons.Default.DeleteSweep, "Clear Recent", tint = Color.Red.copy(alpha = 0.7f))
+                        }
+                    }
+                }
                 HorizontalDivider(color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.1f))
                 if (recentBooks.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -893,6 +1293,8 @@ fun LibraryScreen(
                                 modifier = Modifier.fillMaxWidth().clickable {
                                     updateRecent(book, book.currentPage, book.totalPages)
                                     scope.launch { drawerState.close() }
+                                    // Set path to book's folder before opening
+                                    updatePath(book.folderPath)
                                     onBookClick(book)
                                 }.padding(horizontal = 16.dp, vertical = 2.dp),
                                 verticalArrangement = Arrangement.Center
@@ -957,6 +1359,11 @@ fun LibraryScreen(
                     },
                     actions = {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy((-4).dp)) {
+                            if (currentPath != "/") {
+                                IconButton(onClick = { scope.launch { drawerState.open() } }, modifier = Modifier.size(36.dp)) {
+                                    Icon(Icons.Default.History, null, tint = MaterialTheme.colorScheme.onBackground, modifier = Modifier.size(20.dp))
+                                }
+                            }
                             IconButton(onClick = { filePickerLauncher.launch(arrayOf("application/pdf")) }, modifier = Modifier.size(36.dp)) {
                                 Icon(Icons.Default.Add, null, tint = MaterialTheme.colorScheme.onBackground, modifier = Modifier.size(20.dp))
                             }
@@ -1040,7 +1447,8 @@ fun LibraryScreen(
                                     folder = folder,
                                     itemCount = itemCount,
                                     onClick = { updatePath(folder.path) }, 
-                                    onDelete = { folderToDelete = folder; deleteConfirmCode = (1000 + Random.nextInt(9000)).toString() }
+                                    onDelete = { folderToDelete = folder; deleteConfirmCode = (1000 + Random.nextInt(9000)).toString() },
+                                    onTagClick = { showAssignFolderTagDialog = folder }
                                 )
                             }
                             gridItems(filteredBooks) { book ->
@@ -1055,7 +1463,8 @@ fun LibraryScreen(
                                     folder = folder,
                                     itemCount = itemCount,
                                     onClick = { updatePath(folder.path) }, 
-                                    onDelete = { folderToDelete = folder; deleteConfirmCode = (1000 + Random.nextInt(9000)).toString() }
+                                    onDelete = { folderToDelete = folder; deleteConfirmCode = (1000 + Random.nextInt(9000)).toString() },
+                                    onTagClick = { showAssignFolderTagDialog = folder }
                                 )
                             }
                             items(filteredBooks) { book ->
@@ -1070,7 +1479,7 @@ fun LibraryScreen(
 }
 
 @Composable
-fun FolderGridItem(folder: Folder, itemCount: Int, onClick: () -> Unit, onDelete: () -> Unit) {
+fun FolderGridItem(folder: Folder, itemCount: Int, onClick: () -> Unit, onDelete: () -> Unit, onTagClick: () -> Unit) {
     val defaultColor = MaterialTheme.colorScheme.surfaceVariant
     val bgColor = remember(folder.color, defaultColor) {
         try { if (folder.color != null) Color(android.graphics.Color.parseColor(folder.color)) else defaultColor }
@@ -1122,23 +1531,20 @@ fun FolderGridItem(folder: Folder, itemCount: Int, onClick: () -> Unit, onDelete
                     .padding(4.dp)
             )
 
-            IconButton(
-                onClick = onDelete,
-                modifier = Modifier.align(Alignment.TopEnd).size(24.dp).padding(4.dp)
-            ) {
-                Icon(
-                    Icons.Default.Close,
-                    null,
-                    modifier = Modifier.size(16.dp),
-                    tint = contentColor?.copy(alpha = 0.6f) ?: MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                )
+            Row(modifier = Modifier.fillMaxWidth().padding(2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                IconButton(onClick = onTagClick, modifier = Modifier.size(24.dp).padding(4.dp)) {
+                    Icon(Icons.AutoMirrored.Filled.Label, null, modifier = Modifier.size(16.dp), tint = (contentColor ?: MaterialTheme.colorScheme.onSurfaceVariant).copy(alpha = 0.6f))
+                }
+                IconButton(onClick = onDelete, modifier = Modifier.size(24.dp).padding(4.dp)) {
+                    Icon(Icons.Default.Close, null, modifier = Modifier.size(16.dp), tint = (contentColor ?: MaterialTheme.colorScheme.onSurfaceVariant).copy(alpha = 0.6f))
+                }
             }
         }
     }
 }
 
 @Composable
-fun FolderListItem(folder: Folder, itemCount: Int, onClick: () -> Unit, onDelete: () -> Unit) {
+fun FolderListItem(folder: Folder, itemCount: Int, onClick: () -> Unit, onDelete: () -> Unit, onTagClick: () -> Unit) {
     val folderColor = remember(folder.color) {
         try { if (folder.color != null) Color(android.graphics.Color.parseColor(folder.color)) else null }
         catch (e: Exception) { null }
@@ -1155,6 +1561,7 @@ fun FolderListItem(folder: Folder, itemCount: Int, onClick: () -> Unit, onDelete
             Text(text = folder.name, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
             Text(text = itemCount.toString(), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
         }
+        IconButton(onClick = onTagClick) { Icon(Icons.AutoMirrored.Filled.Label, null, tint = folderColor?.copy(alpha = 0.6f) ?: MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) }
         IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, null, tint = Color.Red.copy(alpha = 0.6f)) }
     }
 }

@@ -399,7 +399,7 @@ fun ReaderScreen(
             } catch (e: Exception) { e.printStackTrace() }
         }
     }
-
+    //Recent pages area:
     // Save current page to local storage (No Sync - Pure Local Memory)
     LaunchedEffect(pagerState.currentPage) {
         if (pageCount > 0) {
@@ -408,16 +408,18 @@ fun ReaderScreen(
                 val lines = if (recentFile.exists()) recentFile.readLines().toMutableList() else mutableListOf()
                 
                 val timestamp = System.currentTimeMillis()
-                val existingIndex = lines.indexOfFirst { it.startsWith("$fileName|") }
-                val newLine = "$fileName|$timestamp|${pagerState.currentPage}|$pageCount"
+                // Use folderPath + fileName for unique identification
+                val uniqueId = if (folderPath == "/") fileName else "$folderPath/$fileName"
+                val existingIndex = lines.indexOfFirst { it.startsWith("$uniqueId|") }
+                val newLine = "$uniqueId|$timestamp|${pagerState.currentPage}|$pageCount"
                 
                 if (existingIndex != -1) {
                     lines.removeAt(existingIndex)
                 }
                 lines.add(0, newLine)
                 
-                // Keep only top 10
-                recentFile.writeText(lines.take(10).joinToString("\n"))
+                // Keep memory for up to 1000 books
+                recentFile.writeText(lines.take(100).joinToString("\n"))
             }
         }
     }
@@ -430,6 +432,7 @@ fun ReaderScreen(
     val currentTextColor = if (isEyeProtectionActive) Color(0xFF5B4636) else themeText
 
     Scaffold(
+        //top bottom action area like the timer, eye protection, view, pages no. search, pages slide and full view.
         topBar = {
             AnimatedVisibility(visible = !isFullScreen, enter = slideInVertically { -it }, exit = slideOutVertically { -it }) {
                 TopAppBar(
@@ -465,6 +468,7 @@ fun ReaderScreen(
                             }
                         }
                     },
+                    //eye protection area
                     actions = {
                         ReaderToolIcon(
                             icon = if (isEyeProtectionActive) Icons.Default.Visibility else Icons.Default.VisibilityOff, 
@@ -491,12 +495,13 @@ fun ReaderScreen(
                 )
             }
         },
+        //bottom action area like the pages, read-aloud, pen, share, file info and zoom in and out
         bottomBar = {
             AnimatedVisibility(visible = !isFullScreen, enter = slideInVertically { it }, exit = slideOutVertically { it }) {
                 BottomAppBar(containerColor = currentBgColor) {
                     if (pageCount > 0) {
                         Text(
-                            text = "Page ${pagerState.currentPage + 1} of $pageCount",
+                            text = "${pagerState.currentPage + 1} of $pageCount",
                             fontSize = 12.sp,
                             color = currentTextColor,
                             fontWeight = FontWeight.Bold,
