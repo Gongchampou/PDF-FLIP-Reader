@@ -32,6 +32,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -138,21 +139,14 @@ fun ReaderScreen(
     val pagerState = rememberPagerState(initialPage = initialPage.coerceIn(0, if (pageCount > 0) pageCount - 1 else 0), pageCount = { pageCount })
     var tts by remember { mutableStateOf<TextToSpeech?>(null) }
 
-    // Zoom States (Flexible/Spring Animated)
+    // Zoom States (Animatable for Zero-Latency during gestures)
     var isZoomMode by remember { mutableStateOf(false) }
-    var targetScale by remember { mutableFloatStateOf(1f) }
-    var targetOffset by remember { mutableStateOf(Offset.Zero) }
+    val scaleAnimatable = remember { Animatable(1f) }
+    val offsetAnimatable = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
+    var containerSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
     
-    val scale by animateFloatAsState(
-        targetValue = targetScale,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
-        label = "ZoomScale"
-    )
-    val offset by animateOffsetAsState(
-        targetValue = targetOffset,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
-        label = "ZoomOffset"
-    )
+    val scale = scaleAnimatable.value
+    val offset = offsetAnimatable.value
 
     // Drawing States
     val pageStrokes: SnapshotStateMap<Int, SnapshotStateList<DrawingStroke>> = remember { mutableStateMapOf() }
@@ -613,18 +607,25 @@ fun ReaderScreen(
                     ReaderToolIcon(if (isZoomMode) Icons.Default.ZoomIn else Icons.Default.ZoomIn, "Zoom Mode", if (isZoomMode) Color.Cyan else currentTextColor) {
                         isZoomMode = !isZoomMode
                         if (!isZoomMode) {
-                            targetScale = 1f
-                            targetOffset = Offset.Zero
+                            scope.launch {
+                                launch { scaleAnimatable.animateTo(1f) }
+                                launch { offsetAnimatable.animateTo(Offset.Zero) }
+                            }
                         }
                     }
 
                     if (isZoomMode) {
                         ReaderToolIcon(Icons.Default.Add, "Zoom In", currentTextColor) { 
-                            targetScale = (targetScale + 0.3f).coerceAtMost(3f) 
+                            scope.launch {
+                                scaleAnimatable.animateTo((scaleAnimatable.value + 0.5f).coerceAtMost(5f))
+                            }
                         }
                         ReaderToolIcon(Icons.Default.Remove, "Zoom Out", currentTextColor) { 
-                            targetScale = (targetScale - 0.3f).coerceAtLeast(1f)
-                            if (targetScale == 1f) targetOffset = Offset.Zero
+                            scope.launch {
+                                val nextScale = (scaleAnimatable.value - 0.5f).coerceAtLeast(1f)
+                                launch { scaleAnimatable.animateTo(nextScale) }
+                                if (nextScale == 1f) launch { offsetAnimatable.animateTo(Offset.Zero) }
+                            }
                         }
                     }
                 }
@@ -635,11 +636,11 @@ fun ReaderScreen(
         Box(modifier = Modifier.fillMaxSize()) {
             if (pageCount > 0) {
                 if (pageMode == PageMode.HorizontalFlip) {
-                    HorizontalPager(
-                        state = pagerState,
-                        modifier = Modifier.padding(if (isFullScreen) PaddingValues(0.dp) else innerPadding).fillMaxSize(),
-                        userScrollEnabled = !isDrawingMode && !isZoomMode && targetScale == 1f
-                    ) { pageIndex: Int ->
+                        HorizontalPager(
+                            state = pagerState,
+                            modifier = Modifier.padding(if (isFullScreen) PaddingValues(0.dp) else innerPadding).fillMaxSize(),
+                            userScrollEnabled = !isDrawingMode && !isAiMode && !isZoomMode && scale == 1f
+                        ) { pageIndex: Int ->
                         // Apply "Natural Paper" transformation if selected
                         val graphicsModifier = Modifier.graphicsLayer {
                             if (flipStyleIndex == 1) { // Natural Paper Flip
@@ -651,40 +652,69 @@ fun ReaderScreen(
                             }
                         }
 
-                        Box(modifier = graphicsModifier) {
-                            ReaderPageContent(
-                                pdfRenderer = pdfRenderer,
-                                pageIndex = pageIndex,
-                                isFullScreen = isFullScreen,
-                                isEyeProtectionActive = isEyeProtectionActive,
-                                isDrawingMode = isDrawingMode,
-                                selectedPenColor = selectedPenColor,
-                                isZoomMode = isZoomMode,
-                                targetScale = targetScale,
-                                targetOffset = targetOffset,
-                                scale = scale,
-                                offset = offset,
-                                pageStrokes = pageStrokes,
-                                redoStrokes = redoStrokes,
-                                onTransform = { zoom: Float, pan: Offset ->
-                                    targetScale = (targetScale * zoom).coerceIn(1f, 3.5f)
-                                    if (targetScale > 1f) targetOffset += pan else targetOffset = Offset.Zero
-                                },
-                                isAiMode = isAiMode,
-                                onAiSelect = { bitmap, path -> 
-                                    performAiAnalysis(
-                                        apiKey = aiApiKey,
-                                        modelName = aiModel,
-                                        pageBitmap = bitmap,
-                                        circlePath = path,
-                                        onStart = { isAiAnalyzing = true; isAiMode = false },
-                                        onResult = { aiExplanation = it; isAiAnalyzing = false },
-                                        onError = { Toast.makeText(context, it, Toast.LENGTH_SHORT).show(); isAiAnalyzing = false },
-                                        scope = scope
+                                Box(modifier = graphicsModifier) {
+                                    ReaderPageContent(
+                                        pdfRenderer = pdfRenderer,
+                                        pageIndex = pageIndex,
+                                        isFullScreen = isFullScreen,
+                                        isEyeProtectionActive = isEyeProtectionActive,
+                                        isDrawingMode = isDrawingMode,
+                                        selectedPenColor = selectedPenColor,
+                                        isZoomMode = isZoomMode,
+                                        scale = scale,
+                                        offset = offset,
+                                        pageStrokes = pageStrokes,
+                                        redoStrokes = redoStrokes,
+                                        containerSize = containerSize,
+                                        onTransform = { centroid, zoom, pan ->
+                                            scope.launch {
+                                                val oldScale = scaleAnimatable.value
+                                                val newScale = (oldScale * zoom).coerceIn(1f, 5f)
+                                                if (newScale > 1f) {
+                                                    val scaleFactor = newScale / oldScale
+                                                    val newOffset = (offsetAnimatable.value - centroid) * scaleFactor + centroid + pan
+                                                    val minX = containerSize.width * (1 - newScale)
+                                                    val minY = containerSize.height * (1 - newScale)
+                                                    scaleAnimatable.snapTo(newScale)
+                                                    offsetAnimatable.snapTo(Offset(newOffset.x.coerceIn(minX, 0f), newOffset.y.coerceIn(minY, 0f)))
+                                                } else {
+                                                    scaleAnimatable.snapTo(1f)
+                                                    offsetAnimatable.snapTo(Offset.Zero)
+                                                }
+                                            }
+                                        },
+                                        onToggleZoom = { tapOffset ->
+                                            scope.launch {
+                                                if (scaleAnimatable.value > 1.1f) {
+                                                    launch { scaleAnimatable.animateTo(1f) }
+                                                    launch { offsetAnimatable.animateTo(Offset.Zero) }
+                                                } else {
+                                                    val tScale = 2.5f
+                                                    val nOffset = tapOffset * (1 - tScale)
+                                                    val minX = containerSize.width * (1 - tScale)
+                                                    val minY = containerSize.height * (1 - tScale)
+                                                    val clamped = Offset(nOffset.x.coerceIn(minX, 0f), nOffset.y.coerceIn(minY, 0f))
+                                                    launch { scaleAnimatable.animateTo(tScale) }
+                                                    launch { offsetAnimatable.animateTo(clamped) }
+                                                }
+                                            }
+                                        },
+                                        onSizeChanged = { containerSize = it },
+                                        isAiMode = isAiMode,
+                                        onAiSelect = { bitmap, path -> 
+                                            performAiAnalysis(
+                                                apiKey = aiApiKey,
+                                                modelName = aiModel,
+                                                pageBitmap = bitmap,
+                                                circlePath = path,
+                                                onStart = { isAiAnalyzing = true; isAiMode = false },
+                                                onResult = { aiExplanation = it; isAiAnalyzing = false },
+                                                onError = { Toast.makeText(context, it, Toast.LENGTH_SHORT).show(); isAiAnalyzing = false },
+                                                scope = scope
+                                            )
+                                        }
                                     )
                                 }
-                            )
-                        }
                     }
                 } else {
                     if (scrollStyleIndex == 1) { // Smooth Flow
@@ -706,16 +736,45 @@ fun ReaderScreen(
                                         isDrawingMode = isDrawingMode,
                                         selectedPenColor = selectedPenColor,
                                         isZoomMode = isZoomMode,
-                                        targetScale = targetScale,
-                                        targetOffset = targetOffset,
                                         scale = scale,
                                         offset = offset,
                                         pageStrokes = pageStrokes,
                                         redoStrokes = redoStrokes,
-                                        onTransform = { zoom: Float, pan: Offset ->
-                                            targetScale = (targetScale * zoom).coerceIn(1f, 3.5f)
-                                            if (targetScale > 1f) targetOffset += pan else targetOffset = Offset.Zero
+                                        containerSize = containerSize,
+                                        onTransform = { centroid, zoom, pan ->
+                                            scope.launch {
+                                                val oldScale = scaleAnimatable.value
+                                                val newScale = (oldScale * zoom).coerceIn(1f, 5f)
+                                                if (newScale > 1f) {
+                                                    val scaleFactor = newScale / oldScale
+                                                    val newOffset = (offsetAnimatable.value - centroid) * scaleFactor + centroid + pan
+                                                    val minX = containerSize.width * (1 - newScale)
+                                                    val minY = containerSize.height * (1 - newScale)
+                                                    scaleAnimatable.snapTo(newScale)
+                                                    offsetAnimatable.snapTo(Offset(newOffset.x.coerceIn(minX, 0f), newOffset.y.coerceIn(minY, 0f)))
+                                                } else {
+                                                    scaleAnimatable.snapTo(1f)
+                                                    offsetAnimatable.snapTo(Offset.Zero)
+                                                }
+                                            }
                                         },
+                                        onToggleZoom = { tapOffset ->
+                                            scope.launch {
+                                                if (scaleAnimatable.value > 1.1f) {
+                                                    launch { scaleAnimatable.animateTo(1f) }
+                                                    launch { offsetAnimatable.animateTo(Offset.Zero) }
+                                                } else {
+                                                    val tScale = 2.5f
+                                                    val nOffset = tapOffset * (1 - tScale)
+                                                    val minX = containerSize.width * (1 - tScale)
+                                                    val minY = containerSize.height * (1 - tScale)
+                                                    val clamped = Offset(nOffset.x.coerceIn(minX, 0f), nOffset.y.coerceIn(minY, 0f))
+                                                    launch { scaleAnimatable.animateTo(tScale) }
+                                                    launch { offsetAnimatable.animateTo(clamped) }
+                                                }
+                                            }
+                                        },
+                                        onSizeChanged = { containerSize = it },
                                         isAiMode = isAiMode,
                                         onAiSelect = { bitmap, path -> 
                                             performAiAnalysis(
@@ -743,7 +802,7 @@ fun ReaderScreen(
                         VerticalPager(
                             state = pagerState,
                             modifier = Modifier.padding(if (isFullScreen) PaddingValues(0.dp) else innerPadding).fillMaxSize(),
-                            userScrollEnabled = !isDrawingMode && !isZoomMode && targetScale == 1f
+                            userScrollEnabled = !isDrawingMode && !isAiMode && !isZoomMode && scale == 1f
                         ) { pageIndex: Int ->
                             ReaderPageContent(
                                 pdfRenderer = pdfRenderer,
@@ -753,16 +812,45 @@ fun ReaderScreen(
                                 isDrawingMode = isDrawingMode,
                                 selectedPenColor = selectedPenColor,
                                 isZoomMode = isZoomMode,
-                                targetScale = targetScale,
-                                targetOffset = targetOffset,
                                 scale = scale,
                                 offset = offset,
                                 pageStrokes = pageStrokes,
                                 redoStrokes = redoStrokes,
-                                onTransform = { zoom: Float, pan: Offset ->
-                                    targetScale = (targetScale * zoom).coerceIn(1f, 3.5f)
-                                    if (targetScale > 1f) targetOffset += pan else targetOffset = Offset.Zero
+                                containerSize = containerSize,
+                                onTransform = { centroid, zoom, pan ->
+                                    scope.launch {
+                                        val oldScale = scaleAnimatable.value
+                                        val newScale = (oldScale * zoom).coerceIn(1f, 5f)
+                                        if (newScale > 1f) {
+                                            val scaleFactor = newScale / oldScale
+                                            val newOffset = (offsetAnimatable.value - centroid) * scaleFactor + centroid + pan
+                                            val minX = containerSize.width * (1 - newScale)
+                                            val minY = containerSize.height * (1 - newScale)
+                                            scaleAnimatable.snapTo(newScale)
+                                            offsetAnimatable.snapTo(Offset(newOffset.x.coerceIn(minX, 0f), newOffset.y.coerceIn(minY, 0f)))
+                                        } else {
+                                            scaleAnimatable.snapTo(1f)
+                                            offsetAnimatable.snapTo(Offset.Zero)
+                                        }
+                                    }
                                 },
+                                onToggleZoom = { tapOffset ->
+                                    scope.launch {
+                                        if (scaleAnimatable.value > 1.1f) {
+                                            launch { scaleAnimatable.animateTo(1f) }
+                                            launch { offsetAnimatable.animateTo(Offset.Zero) }
+                                        } else {
+                                            val tScale = 2.5f
+                                            val nOffset = tapOffset * (1 - tScale)
+                                            val minX = containerSize.width * (1 - tScale)
+                                            val minY = containerSize.height * (1 - tScale)
+                                            val clamped = Offset(nOffset.x.coerceIn(minX, 0f), nOffset.y.coerceIn(minY, 0f))
+                                            launch { scaleAnimatable.animateTo(tScale) }
+                                            launch { offsetAnimatable.animateTo(clamped) }
+                                        }
+                                    }
+                                },
+                                onSizeChanged = { containerSize = it },
                                 isAiMode = isAiMode,
                                 onAiSelect = { bitmap, path -> 
                                     performAiAnalysis(
@@ -898,8 +986,10 @@ fun ReaderScreen(
                         ReaderToolIcon(Icons.Default.ZoomIn, "Zoom Mode", if (isZoomMode) Color.Cyan else Color.White) {
                             isZoomMode = !isZoomMode
                             if (!isZoomMode) {
-                                targetScale = 1f
-                                targetOffset = Offset.Zero
+                                scope.launch {
+                                    launch { scaleAnimatable.animateTo(1f) }
+                                    launch { offsetAnimatable.animateTo(Offset.Zero) }
+                                }
                             }
                         }
                         
@@ -1188,13 +1278,14 @@ fun ReaderPageContent(
     isDrawingMode: Boolean,
     selectedPenColor: Color,
     isZoomMode: Boolean,
-    targetScale: Float,
-    targetOffset: Offset,
     scale: Float,
     offset: Offset,
     pageStrokes: androidx.compose.runtime.snapshots.SnapshotStateMap<Int, SnapshotStateList<DrawingStroke>>,
     redoStrokes: androidx.compose.runtime.snapshots.SnapshotStateMap<Int, SnapshotStateList<DrawingStroke>>,
-    onTransform: (Float, Offset) -> Unit,
+    containerSize: androidx.compose.ui.unit.IntSize,
+    onTransform: (Offset, Float, Offset) -> Unit,
+    onToggleZoom: (Offset) -> Unit,
+    onSizeChanged: (androidx.compose.ui.unit.IntSize) -> Unit,
     isAiMode: Boolean,
     onAiSelect: (Bitmap, List<Offset>) -> Unit
 ) {
@@ -1205,10 +1296,20 @@ fun ReaderPageContent(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .pointerInput(isDrawingMode, isZoomMode, targetScale, isAiMode) {
+            .onSizeChanged { onSizeChanged(it) }
+            .pointerInput(isDrawingMode, isZoomMode, isAiMode) {
                 if (!isDrawingMode && !isAiMode && isZoomMode) {
-                    detectTransformGestures { _, pan, zoom, _ ->
-                        onTransform(zoom, pan)
+                    detectTapGestures(
+                        onDoubleTap = { tapOffset: Offset ->
+                            onToggleZoom(tapOffset)
+                        }
+                    )
+                }
+            }
+            .pointerInput(isDrawingMode, isZoomMode, isAiMode) {
+                if (!isDrawingMode && !isAiMode && isZoomMode) {
+                    detectTransformGestures { centroid, pan, zoom, _ ->
+                        onTransform(centroid, zoom, pan)
                     }
                 }
             }
@@ -1216,7 +1317,8 @@ fun ReaderPageContent(
                 scaleX = scale,
                 scaleY = scale,
                 translationX = offset.x,
-                translationY = offset.y
+                translationY = offset.y,
+                transformOrigin = TransformOrigin(0f, 0f)
             )
     ) {
         PdfPageItem(pdfRenderer, pageIndex, isFullScreen, isEyeProtectionActive) { bitmap ->
