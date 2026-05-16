@@ -30,11 +30,11 @@ The app creates a special folder on your phone:
 If you are new to coding, think of the app like a house with different rooms:
 
 ### 🏠 The Architecture (File Sizes)
-- **`MainActivity.kt`** (243 lines): The **Front Door**. It manages which screen you are looking at (Library, Reader, or Settings).
-- **`LibraryPage.kt`** (1,579 lines): The **Bookshelf**. It scans your folders for PDFs and remembers your tags and folder structure.
-- **`ReaderPage.kt`** (1,273 lines): The **Reading Chair**. This is where the magic happens! It renders the PDF, handles page flips, and saves your progress.
-- **`SettingsPage.kt`** (966 lines): The **Control Panel**. Where you change the theme, set up AI, and manage your backups.
-- **`AiAssistantPage.kt`** (172 lines): The **AI Brain**. This is where the app talks to Google Gemini to explain parts of your book.
+- **`MainActivity.kt`** (256 lines): The **Front Door**. It manages which screen you are looking at (Library, Reader, or Settings).
+- **`LibraryPage.kt`** (1,660 lines): The **Bookshelf**. It scans your folders for PDFs and remembers your tags and folder structure.
+- **`ReaderPage.kt`** (1,524 lines): The **Reading Chair**. This is where the magic happens! It renders the PDF, handles page flips, and saves your progress.
+- **`SettingsPage.kt`** (1,007 lines): The **Control Panel**. Where you change the theme, set up AI, and manage your backups.
+- **`AiAssistantPage.kt`** (179 lines): The **AI Brain**. This is where the app talks to Google Gemini to explain parts of your book.
 
 ### 🔍 Deep Dive: How the "Resume Reading" Works 📍
 
@@ -48,6 +48,15 @@ Have you ever wondered how the app remembers you were on page 42 of a book you h
 6.  **The 1,000 Book Memory**: Even if a book falls off the "Recent" list, PDFFlip still keeps its progress in its 1,000-note long-term memory.
 7.  **Correct Sorting**: PDFFlip uses **Unix Timestamps** (the exact millisecond you opened a book) to make sure your most recently read books always stay at the very top of the list.
 8.  **Reset Feature 🗑️**: If you want to start over, you can tap the **Delete Sweep** icon in the "Recent Activity" sidebar. This instantly wipes the memory for every book, making them disappear from the recent list and clearing all progress bars.
+
+### 🖊️ How the Custom Drawing Pen Works (New Feature!) 🎨
+
+Ever wanted a thicker marker for highlighting or a thin pen for tiny notes? Here is how the app handles your artistic choices:
+
+1.  **Stroke Data (The Memory)**: When you draw, the app doesn't just save a picture. It saves a "List of Points" along with the **color** and **thickness** you chose. This is like the app remembering exactly how you moved your hand and which pen you were holding.
+2.  **Normalized Points 📏**: Because phones have different screen sizes, the app saves your drawings in "Percentages" (0 to 1). So if you draw in the middle of the page on a small phone, it stays in the middle on a big tablet!
+3.  **Real-Time Rendering 🖌️**: As you move the slider in the "Pen Size" dialog, the app uses a **Canvas** to show you a live preview. It's like testing a marker on a scrap piece of paper before writing in your book.
+4.  **Vector Output 📄**: When you hit "Save", the app talks to a library called **PdfBox**. It translates your finger movements into professional PDF "Paths". If you chose a 20px thickness, the app tells the PDF: *"Make this line exactly 20 units wide"*. This ensures your notes look sharp even if you zoom in 500%!
 
 ### 🛠️ Key Coding Concepts
 

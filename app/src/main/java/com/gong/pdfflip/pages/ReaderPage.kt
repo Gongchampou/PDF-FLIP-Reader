@@ -80,7 +80,7 @@ import kotlinx.coroutines.withContext
 import java.util.Locale
 
 // Data class to store our strokes for saving (Points are normalized 0f..1f)
-data class DrawingStroke(val points: List<Offset>, val color: Color = Color.Red)
+data class DrawingStroke(val points: List<Offset>, val color: Color = Color.Red, val width: Float = 5f)
 
 enum class PageMode {
     HorizontalFlip,
@@ -132,6 +132,8 @@ fun ReaderScreen(
     var showFileInfo by remember { mutableStateOf(false) }
 
     var selectedPenColor by remember { mutableStateOf(Color.Red) }
+    var selectedPenWidth by remember { mutableStateOf(5f) }
+    var showPenSizePicker by remember { mutableStateOf(false) }
     var showColorPicker by remember { mutableStateOf(false) }
     var showDiscardDialog by remember { mutableStateOf(false) }
     var pageMode by remember { mutableStateOf(if (initialPageModeIndex == 0) PageMode.HorizontalFlip else PageMode.VerticalScroll) }
@@ -277,7 +279,7 @@ fun ReaderScreen(
                                 val b = (stroke.color.blue * 255).toInt()
                                 
                                 contentStream.setStrokingColor(r, g, b)
-                                contentStream.setLineWidth(3f)
+                                contentStream.setLineWidth(stroke.width)
                                 
                                 val first = stroke.points.first()
                                 val startX = mBox.lowerLeftX + (first.x * mBox.width)
@@ -553,6 +555,11 @@ fun ReaderScreen(
                             )
                         }
 
+                        // Pen Size Picker
+                        ReaderToolIcon(Icons.Default.LineWeight, "Pen Size", currentTextColor) {
+                            showPenSizePicker = true
+                        }
+
                         // Undo
                         ReaderToolIcon(
                             icon = Icons.AutoMirrored.Filled.Undo, 
@@ -660,6 +667,7 @@ fun ReaderScreen(
                                         isEyeProtectionActive = isEyeProtectionActive,
                                         isDrawingMode = isDrawingMode,
                                         selectedPenColor = selectedPenColor,
+                                        selectedPenWidth = selectedPenWidth,
                                         isZoomMode = isZoomMode,
                                         scale = scale,
                                         offset = offset,
@@ -735,6 +743,7 @@ fun ReaderScreen(
                                         isEyeProtectionActive = isEyeProtectionActive,
                                         isDrawingMode = isDrawingMode,
                                         selectedPenColor = selectedPenColor,
+                                        selectedPenWidth = selectedPenWidth,
                                         isZoomMode = isZoomMode,
                                         scale = scale,
                                         offset = offset,
@@ -811,6 +820,7 @@ fun ReaderScreen(
                                 isEyeProtectionActive = isEyeProtectionActive,
                                 isDrawingMode = isDrawingMode,
                                 selectedPenColor = selectedPenColor,
+                                selectedPenWidth = selectedPenWidth,
                                 isZoomMode = isZoomMode,
                                 scale = scale,
                                 offset = offset,
@@ -917,6 +927,11 @@ fun ReaderScreen(
                                     .background(selectedPenColor, CircleShape)
                                     .clickable { showColorPicker = true }
                             )
+
+                            // Pen Size Picker
+                            ReaderToolIcon(Icons.Default.LineWeight, "Pen Size", Color.White) {
+                                showPenSizePicker = true
+                            }
 
                             // Undo
                             ReaderToolIcon(
@@ -1166,6 +1181,72 @@ fun ReaderScreen(
         onDismiss = { showFileInfo = false },
         currentTextColor = currentTextColor
     )
+
+    if (showPenSizePicker) {
+        androidx.compose.ui.window.Dialog(onDismissRequest = { showPenSizePicker = false }) {
+            Surface(
+                modifier = Modifier.width(280.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = currentBgColor,
+                tonalElevation = 8.dp
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("Pen Size", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = currentTextColor)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    
+                    // Preview
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(40.dp)
+                            .background(currentTextColor.copy(alpha = 0.05f), RoundedCornerShape(8.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Canvas(modifier = Modifier.fillMaxWidth().height(selectedPenWidth.dp)) {
+                            drawLine(
+                                color = selectedPenColor,
+                                start = Offset(size.width * 0.2f, size.height / 2),
+                                end = Offset(size.width * 0.8f, size.height / 2),
+                                strokeWidth = selectedPenWidth,
+                                cap = StrokeCap.Round
+                            )
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Slider(
+                        value = selectedPenWidth,
+                        onValueChange = { selectedPenWidth = it },
+                        valueRange = 1f..50f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = selectedPenColor,
+                            activeTrackColor = selectedPenColor.copy(alpha = 0.3f)
+                        )
+                    )
+                    
+                    Text("${selectedPenWidth.toInt()} px", fontSize = 12.sp, color = currentTextColor.copy(alpha = 0.7f))
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(
+                            onClick = { showPenSizePicker = false },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                        ) {
+                            Text("Done", color = selectedPenColor, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
     
     if (showSearch) {
         var pageInput by remember { mutableStateOf("") }
@@ -1221,13 +1302,19 @@ fun ReaderScreen(
 }
 
 @Composable
-fun DrawingCanvas(strokes: SnapshotStateList<DrawingStroke>, redoList: SnapshotStateList<DrawingStroke>, selectedColor: Color, modifier: Modifier) {
+fun DrawingCanvas(
+    strokes: SnapshotStateList<DrawingStroke>,
+    redoList: SnapshotStateList<DrawingStroke>,
+    selectedColor: Color,
+    selectedWidth: Float,
+    modifier: Modifier
+) {
     var currentPoints = remember { mutableStateListOf<Offset>() }
     var canvasSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
 
     Canvas(modifier = modifier
         .onSizeChanged { canvasSize = it }
-        .pointerInput(selectedColor) {
+        .pointerInput(selectedColor, selectedWidth) {
             detectDragGestures(
                 onDragStart = { offset -> 
                     currentPoints.add(offset)
@@ -1239,7 +1326,7 @@ fun DrawingCanvas(strokes: SnapshotStateList<DrawingStroke>, redoList: SnapshotS
                 onDragEnd = { 
                     if (canvasSize.width > 0 && canvasSize.height > 0) {
                         val normalized = currentPoints.map { Offset(it.x / canvasSize.width, it.y / canvasSize.height) }
-                        strokes.add(DrawingStroke(normalized, selectedColor))
+                        strokes.add(DrawingStroke(normalized, selectedColor, selectedWidth))
                     }
                     currentPoints.clear()
                 }
@@ -1255,7 +1342,7 @@ fun DrawingCanvas(strokes: SnapshotStateList<DrawingStroke>, redoList: SnapshotS
                     stroke.points.forEach { lineTo(it.x * size.width, it.y * size.height) }
                 }
             }
-            drawPath(path, stroke.color, style = Stroke(width = 5f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+            drawPath(path, stroke.color, style = Stroke(width = stroke.width, cap = StrokeCap.Round, join = StrokeJoin.Round))
         }
         
         // Draw current stroke
@@ -1264,7 +1351,7 @@ fun DrawingCanvas(strokes: SnapshotStateList<DrawingStroke>, redoList: SnapshotS
                 moveTo(currentPoints.first().x, currentPoints.first().y)
                 currentPoints.forEach { lineTo(it.x, it.y) }
             }
-            drawPath(path, selectedColor, style = Stroke(width = 5f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+            drawPath(path, selectedColor, style = Stroke(width = selectedWidth, cap = StrokeCap.Round, join = StrokeJoin.Round))
         }
     }
 }
@@ -1277,6 +1364,7 @@ fun ReaderPageContent(
     isEyeProtectionActive: Boolean,
     isDrawingMode: Boolean,
     selectedPenColor: Color,
+    selectedPenWidth: Float,
     isZoomMode: Boolean,
     scale: Float,
     offset: Offset,
@@ -1320,13 +1408,14 @@ fun ReaderPageContent(
                 translationY = offset.y,
                 transformOrigin = TransformOrigin(0f, 0f)
             )
+            .padding(if (isFullScreen) 0.dp else 8.dp) // Moved padding here
     ) {
         PdfPageItem(pdfRenderer, pageIndex, isFullScreen, isEyeProtectionActive) { bitmap ->
             pageBitmap = bitmap
         }
         
         if (isDrawingMode) {
-            DrawingCanvas(strokes, redos, selectedPenColor, Modifier.fillMaxSize())
+            DrawingCanvas(strokes, redos, selectedPenColor, selectedPenWidth, Modifier.fillMaxSize())
         }
 
         if (isAiMode) {
@@ -1358,7 +1447,7 @@ fun PdfPageItem(renderer: PdfRenderer?, pageIndex: Int, isFullScreen: Boolean, i
     val cardBg = if (isEyeProtection) Color(0xFFFDF7E7) else MaterialTheme.colorScheme.surfaceVariant
     
     Card(
-        modifier = Modifier.fillMaxSize().padding(if (isFullScreen) 0.dp else 8.dp), 
+        modifier = Modifier.fillMaxSize(),
         shape = if (isFullScreen) RoundedCornerShape(0.dp) else RoundedCornerShape(topEnd = 32.dp, bottomEnd = 32.dp), 
         colors = CardDefaults.cardColors(containerColor = cardBg)
     ) {
