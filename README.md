@@ -49,14 +49,14 @@ Have you ever wondered how the app remembers you were on page 42 of a book you h
 7.  **Correct Sorting**: PDFFlip uses **Unix Timestamps** (the exact millisecond you opened a book) to make sure your most recently read books always stay at the very top of the list.
 8.  **Reset Feature 🗑️**: If you want to start over, you can tap the **Delete Sweep** icon in the "Recent Activity" sidebar. This instantly wipes the memory for every book, making them disappear from the recent list and clearing all progress bars.
 
-### 🖊️ How the Custom Drawing Pen Works (New Feature!) 🎨
+### 🖊️ How the Custom Drawing Pen & Highlighter Works (New Feature!) 🎨
 
-Ever wanted a thicker marker for highlighting or a thin pen for tiny notes? Here is how the app handles your artistic choices:
+Ever wanted a translucent highlighter for underlining text or a thin pen for tiny notes? Here is how the app handles your annotations:
 
-1.  **Stroke Data (The Memory)**: When you draw, the app doesn't just save a picture. It saves a "List of Points" along with the **color** and **thickness** you chose. This is like the app remembering exactly how you moved your hand and which pen you were holding.
-2.  **Normalized Points 📏**: Because phones have different screen sizes, the app saves your drawings in "Percentages" (0 to 1). So if you draw in the middle of the page on a small phone, it stays in the middle on a big tablet!
-3.  **Real-Time Rendering 🖌️**: As you move the slider in the "Pen Size" dialog, the app uses a **Canvas** to show you a live preview. It's like testing a marker on a scrap piece of paper before writing in your book.
-4.  **Vector Output 📄**: When you hit "Save", the app talks to a library called **PdfBox**. It translates your finger movements into professional PDF "Paths". If you chose a 20px thickness, the app tells the PDF: *"Make this line exactly 20 units wide"*. This ensures your notes look sharp even if you zoom in 500%!
+1.  **Text-Preserving Highlighter Mode 🖍️**: When using Highlighter Mode, strokes render with semi-transparency (~45% opacity) and `Multiply` blend mode. This means words underneath remain 100% crisp, sharp, and readable when drawing over text.
+2.  **Dual Tool Modes (Highlighter 🖍️ & Pen 🖊️)**: Switch effortlessly between translucent highlighters and solid fine-point pens. Customize stroke size (1px–60px), transparency (10%–100%), and vibrant color palettes.
+3.  **Stroke Data (The Memory)**: When you draw, the app saves a list of normalized points along with color, width, transparency (alpha), and tool mode.
+4.  **Vector PDF Saving with PDFBox 📄**: When you tap "Save", the app writes PDFBox `PDExtendedGraphicsState` objects (`strokingAlphaConstant` and `BlendMode.MULTIPLY`) into the PDF file so highlights remain translucent and text stays legible across all PDF viewers.
 
 ### 🛠️ Key Coding Concepts
 

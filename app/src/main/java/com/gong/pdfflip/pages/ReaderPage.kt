@@ -57,6 +57,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -72,6 +73,8 @@ import androidx.compose.ui.unit.sp
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
+import com.tom_roush.pdfbox.pdmodel.graphics.blend.BlendMode as PdfBlendMode
+import com.tom_roush.pdfbox.pdmodel.graphics.state.PDExtendedGraphicsState
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -80,7 +83,14 @@ import kotlinx.coroutines.withContext
 import java.util.Locale
 
 // Data class to store our strokes for saving (Points are normalized 0f..1f)
-data class DrawingStroke(val points: List<Offset>, val color: Color = Color.Red, val width: Float = 5f)
+data class DrawingStroke(
+    val points: List<Offset>,
+    val color: Color = Color(0xFFFFEB3B),
+    val width: Float = 20f,
+    val alpha: Float = 0.45f,
+    val isHighlighter: Boolean = true,
+    val canvasWidth: Float = 1000f
+)
 
 enum class PageMode {
     HorizontalFlip,
@@ -131,8 +141,65 @@ fun ReaderScreen(
     var isAiAnalyzing by remember { mutableStateOf(false) }
     var showFileInfo by remember { mutableStateOf(false) }
 
-    var selectedPenColor by remember { mutableStateOf(Color.Red) }
-    var selectedPenWidth by remember { mutableStateOf(5f) }
+    // --- PERSISTENT DRAWING SETTINGS ---
+    val drawingPrefs = remember { context.getSharedPreferences("pdfflip_drawing_prefs", Context.MODE_PRIVATE) }
+
+    var isHighlighterMode by remember { 
+        mutableStateOf(drawingPrefs.getBoolean("is_highlighter_mode", true)) 
+    }
+    
+    var highlighterColor by remember { 
+        mutableStateOf(Color(drawingPrefs.getInt("hl_color", Color(0xFFFFEB3B).toArgb()))) 
+    }
+    var highlighterWidth by remember { 
+        mutableFloatStateOf(drawingPrefs.getFloat("hl_width", 20f)) 
+    }
+    var highlighterAlpha by remember { 
+        mutableFloatStateOf(drawingPrefs.getFloat("hl_alpha", 0.45f)) 
+    }
+
+    var penColor by remember { 
+        mutableStateOf(Color(drawingPrefs.getInt("pen_color", Color.Red.toArgb()))) 
+    }
+    var penWidth by remember { 
+        mutableFloatStateOf(drawingPrefs.getFloat("pen_width", 5f)) 
+    }
+    var penAlpha by remember { 
+        mutableFloatStateOf(drawingPrefs.getFloat("pen_alpha", 1.0f)) 
+    }
+
+    val selectedPenColor = if (isHighlighterMode) highlighterColor else penColor
+    val selectedPenWidth = if (isHighlighterMode) highlighterWidth else penWidth
+    val selectedPenAlpha = if (isHighlighterMode) highlighterAlpha else penAlpha
+
+    fun updateDrawingSettings(
+        newColor: Color = selectedPenColor,
+        newWidth: Float = selectedPenWidth,
+        newAlpha: Float = selectedPenAlpha,
+        newIsHighlighter: Boolean = isHighlighterMode
+    ) {
+        isHighlighterMode = newIsHighlighter
+        if (newIsHighlighter) {
+            highlighterColor = newColor
+            highlighterWidth = newWidth
+            highlighterAlpha = newAlpha
+        } else {
+            penColor = newColor
+            penWidth = newWidth
+            penAlpha = newAlpha
+        }
+        drawingPrefs.edit().apply {
+            putBoolean("is_highlighter_mode", newIsHighlighter)
+            putInt("hl_color", highlighterColor.toArgb())
+            putFloat("hl_width", highlighterWidth)
+            putFloat("hl_alpha", highlighterAlpha)
+            putInt("pen_color", penColor.toArgb())
+            putFloat("pen_width", penWidth)
+            putFloat("pen_alpha", penAlpha)
+            apply()
+        }
+    }
+
     var showPenSizePicker by remember { mutableStateOf(false) }
     var showColorPicker by remember { mutableStateOf(false) }
     var showDiscardDialog by remember { mutableStateOf(false) }
@@ -274,12 +341,21 @@ fun ReaderScreen(
                         
                         strokes.forEach { stroke ->
                             if (stroke.points.isNotEmpty()) {
-                                val r = (stroke.color.red * 255).toInt()
-                                val g = (stroke.color.green * 255).toInt()
-                                val b = (stroke.color.blue * 255).toInt()
+                                val graphicsState = PDExtendedGraphicsState().apply {
+                                    strokingAlphaConstant = stroke.alpha
+                                    if (stroke.isHighlighter) {
+                                        blendMode = PdfBlendMode.MULTIPLY
+                                    }
+                                }
+                                contentStream.setGraphicsStateParameters(graphicsState)
                                 
-                                contentStream.setStrokingColor(r, g, b)
-                                contentStream.setLineWidth(stroke.width)
+                                val refWidth = if (stroke.canvasWidth > 0f) stroke.canvasWidth else mBox.width
+                                val pdfLineWidth = stroke.width * (mBox.width / refWidth)
+                                
+                                contentStream.setStrokingColor(stroke.color.red, stroke.color.green, stroke.color.blue)
+                                contentStream.setLineWidth(pdfLineWidth)
+                                contentStream.setLineCapStyle(if (stroke.isHighlighter) 2 else 1)
+                                contentStream.setLineJoinStyle(1)
                                 
                                 val first = stroke.points.first()
                                 val startX = mBox.lowerLeftX + (first.x * mBox.width)
@@ -544,13 +620,23 @@ fun ReaderScreen(
                     ReaderToolIcon(if (isDrawingMode) Icons.Default.EditOff else Icons.Default.Edit, "Draw", currentTextColor) { isDrawingMode = !isDrawingMode }
                     
                     if (isDrawingMode) {
-                        // Pen Color Picker
+                        // Tool Mode Toggle (Highlighter 🖍️ vs Pen 🖊️)
+                        ReaderToolIcon(
+                            icon = if (isHighlighterMode) Icons.Default.Highlight else Icons.Default.Edit,
+                            description = if (isHighlighterMode) "Switch to Pen" else "Switch to Highlighter",
+                            tint = if (isHighlighterMode) Color(0xFFFFC107) else currentTextColor
+                        ) {
+                            updateDrawingSettings(newIsHighlighter = !isHighlighterMode)
+                        }
+
+                        // Color Picker
                         Box {
                             Box(
                                 modifier = Modifier
                                     .padding(8.dp)
                                     .size(20.dp)
-                                    .background(selectedPenColor, CircleShape)
+                                    .background(selectedPenColor.copy(alpha = selectedPenAlpha), CircleShape)
+                                    .border(1.dp, currentTextColor.copy(alpha = 0.3f), CircleShape)
                                     .clickable { showColorPicker = true }
                             )
                         }
@@ -668,6 +754,8 @@ fun ReaderScreen(
                                         isDrawingMode = isDrawingMode,
                                         selectedPenColor = selectedPenColor,
                                         selectedPenWidth = selectedPenWidth,
+                                        selectedPenAlpha = selectedPenAlpha,
+                                        isHighlighterMode = isHighlighterMode,
                                         isZoomMode = isZoomMode,
                                         scale = scale,
                                         offset = offset,
@@ -744,6 +832,8 @@ fun ReaderScreen(
                                         isDrawingMode = isDrawingMode,
                                         selectedPenColor = selectedPenColor,
                                         selectedPenWidth = selectedPenWidth,
+                                        selectedPenAlpha = selectedPenAlpha,
+                                        isHighlighterMode = isHighlighterMode,
                                         isZoomMode = isZoomMode,
                                         scale = scale,
                                         offset = offset,
@@ -821,6 +911,8 @@ fun ReaderScreen(
                                 isDrawingMode = isDrawingMode,
                                 selectedPenColor = selectedPenColor,
                                 selectedPenWidth = selectedPenWidth,
+                                selectedPenAlpha = selectedPenAlpha,
+                                isHighlighterMode = isHighlighterMode,
                                 isZoomMode = isZoomMode,
                                 scale = scale,
                                 offset = offset,
@@ -919,12 +1011,22 @@ fun ReaderScreen(
                         }
 
                         if (isDrawingMode) {
+                            // Tool Mode Toggle
+                            ReaderToolIcon(
+                                icon = if (isHighlighterMode) Icons.Default.Highlight else Icons.Default.Edit,
+                                description = if (isHighlighterMode) "Switch to Pen" else "Switch to Highlighter",
+                                tint = if (isHighlighterMode) Color(0xFFFFC107) else Color.White
+                            ) {
+                                updateDrawingSettings(newIsHighlighter = !isHighlighterMode)
+                            }
+
                             // Pen Color Picker
                             Box(
                                 modifier = Modifier
                                     .padding(8.dp)
                                     .size(20.dp)
-                                    .background(selectedPenColor, CircleShape)
+                                    .background(selectedPenColor.copy(alpha = selectedPenAlpha), CircleShape)
+                                    .border(1.dp, Color.White.copy(alpha = 0.5f), CircleShape)
                                     .clickable { showColorPicker = true }
                             )
 
@@ -1091,10 +1193,19 @@ fun ReaderScreen(
 
     // --- COLOR PICKER DIALOG ---
     if (showColorPicker) {
-        val colors = listOf(Color.Red, Color.Blue, Color.Green, Color.Black, Color.Yellow, Color.Magenta)
+        val colors = listOf(
+            Color(0xFFFFEB3B), // Yellow
+            Color(0xFFAED581), // Green
+            Color(0xFF80DEEA), // Cyan
+            Color(0xFFF48FB1), // Pink
+            Color(0xFFFFCC80), // Orange
+            Color(0xFFEF5350), // Red
+            Color(0xFF4FC3F7), // Blue
+            Color(0xFF424242)  // Dark Gray
+        )
         AlertDialog(
             onDismissRequest = { showColorPicker = false },
-            title = { Text("Select Pen Color") },
+            title = { Text(if (isHighlighterMode) "Select Highlighter Color" else "Select Pen Color") },
             text = {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1103,13 +1214,17 @@ fun ReaderScreen(
                     colors.forEach { color ->
                         Box(
                             modifier = Modifier
-                                .size(40.dp)
+                                .size(36.dp)
                                 .background(color, CircleShape)
+                                .border(
+                                    width = if (selectedPenColor == color) 2.dp else 0.dp,
+                                    color = if (selectedPenColor == color) currentTextColor else Color.Transparent,
+                                    shape = CircleShape
+                                )
                                 .clickable { 
-                                    selectedPenColor = color
+                                    updateDrawingSettings(newColor = color)
                                     showColorPicker = false
                                 }
-                                .let { if (selectedPenColor == color) it.background(Color.Gray.copy(alpha = 0.3f), CircleShape) else it }
                         )
                     }
                 }
@@ -1183,9 +1298,19 @@ fun ReaderScreen(
     )
 
     if (showPenSizePicker) {
+        val presetColors = listOf(
+            Color(0xFFFFEB3B), // Yellow
+            Color(0xFFAED581), // Green
+            Color(0xFF80DEEA), // Cyan
+            Color(0xFFF48FB1), // Pink
+            Color(0xFFFFCC80), // Orange
+            Color(0xFFEF5350), // Red
+            Color(0xFF4FC3F7), // Blue
+            Color(0xFF424242)  // Dark Gray
+        )
         androidx.compose.ui.window.Dialog(onDismissRequest = { showPenSizePicker = false }) {
             Surface(
-                modifier = Modifier.width(280.dp),
+                modifier = Modifier.width(320.dp),
                 shape = RoundedCornerShape(16.dp),
                 color = currentBgColor,
                 tonalElevation = 8.dp
@@ -1194,44 +1319,124 @@ fun ReaderScreen(
                     modifier = Modifier.padding(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Text("Pen Size", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = currentTextColor)
+                    Text(
+                        text = if (isHighlighterMode) "Highlighter Settings 🖍️" else "Pen Settings 🖊️",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = currentTextColor
+                    )
                     Spacer(modifier = Modifier.height(12.dp))
                     
-                    // Preview
+                    // Tool Mode Switcher
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(currentTextColor.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
+                            .padding(4.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        FilterChip(
+                            selected = isHighlighterMode,
+                            onClick = { updateDrawingSettings(newIsHighlighter = true) },
+                            label = { Text("Highlighter 🖍️") },
+                            leadingIcon = if (isHighlighterMode) { { Icon(Icons.Default.Highlight, null, modifier = Modifier.size(16.dp)) } } else null
+                        )
+                        FilterChip(
+                            selected = !isHighlighterMode,
+                            onClick = { updateDrawingSettings(newIsHighlighter = false) },
+                            label = { Text("Pen 🖊️") },
+                            leadingIcon = if (!isHighlighterMode) { { Icon(Icons.Default.Edit, null, modifier = Modifier.size(16.dp)) } } else null
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Live Text Underline Preview Box
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(40.dp)
-                            .background(currentTextColor.copy(alpha = 0.05f), RoundedCornerShape(8.dp)),
+                            .height(48.dp)
+                            .background(Color.White, RoundedCornerShape(8.dp))
+                            .border(1.dp, currentTextColor.copy(alpha = 0.2f), RoundedCornerShape(8.dp)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Canvas(modifier = Modifier.fillMaxWidth().height(selectedPenWidth.dp)) {
+                        Text(
+                            text = "Sample Text Readable Underline",
+                            color = Color.Black,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            val y = size.height / 2
                             drawLine(
-                                color = selectedPenColor,
-                                start = Offset(size.width * 0.2f, size.height / 2),
-                                end = Offset(size.width * 0.8f, size.height / 2),
+                                color = selectedPenColor.copy(alpha = selectedPenAlpha),
+                                start = Offset(size.width * 0.08f, y),
+                                end = Offset(size.width * 0.92f, y),
                                 strokeWidth = selectedPenWidth,
-                                cap = StrokeCap.Round
+                                cap = if (isHighlighterMode) StrokeCap.Square else StrokeCap.Round,
+                                blendMode = if (isHighlighterMode) BlendMode.Multiply else BlendMode.SrcOver
                             )
                         }
                     }
-                    
-                    Spacer(modifier = Modifier.height(8.dp))
-                    
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Color Palette
+                    Text("Color", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = currentTextColor, modifier = Modifier.align(Alignment.Start))
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        presetColors.forEach { color ->
+                            Box(
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .background(color, CircleShape)
+                                    .border(
+                                        width = if (selectedPenColor == color) 2.dp else 0.dp,
+                                        color = if (selectedPenColor == color) currentTextColor else Color.Transparent,
+                                        shape = CircleShape
+                                    )
+                                    .clickable { updateDrawingSettings(newColor = color) }
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Size Slider
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Stroke Size", fontSize = 12.sp, color = currentTextColor)
+                        Text("${selectedPenWidth.toInt()} px", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = currentTextColor)
+                    }
                     Slider(
                         value = selectedPenWidth,
-                        onValueChange = { selectedPenWidth = it },
-                        valueRange = 1f..50f,
+                        onValueChange = { updateDrawingSettings(newWidth = it) },
+                        valueRange = 1f..60f,
                         colors = SliderDefaults.colors(
                             thumbColor = selectedPenColor,
-                            activeTrackColor = selectedPenColor.copy(alpha = 0.3f)
+                            activeTrackColor = selectedPenColor.copy(alpha = 0.5f)
                         )
                     )
-                    
-                    Text("${selectedPenWidth.toInt()} px", fontSize = 12.sp, color = currentTextColor.copy(alpha = 0.7f))
-                    
+
+                    // Transparency Slider
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Opacity / Transparency", fontSize = 12.sp, color = currentTextColor)
+                        Text("${(selectedPenAlpha * 100).toInt()}%", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = currentTextColor)
+                    }
+                    Slider(
+                        value = selectedPenAlpha,
+                        onValueChange = { updateDrawingSettings(newAlpha = it) },
+                        valueRange = 0.1f..1.0f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = selectedPenColor,
+                            activeTrackColor = selectedPenColor.copy(alpha = 0.5f)
+                        )
+                    )
+
                     Spacer(modifier = Modifier.height(8.dp))
-                    
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.End
@@ -1240,7 +1445,7 @@ fun ReaderScreen(
                             onClick = { showPenSizePicker = false },
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
                         ) {
-                            Text("Done", color = selectedPenColor, fontWeight = FontWeight.Bold)
+                            Text("Done", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -1307,6 +1512,8 @@ fun DrawingCanvas(
     redoList: SnapshotStateList<DrawingStroke>,
     selectedColor: Color,
     selectedWidth: Float,
+    selectedAlpha: Float,
+    isHighlighter: Boolean,
     modifier: Modifier
 ) {
     var currentPoints = remember { mutableStateListOf<Offset>() }
@@ -1314,7 +1521,7 @@ fun DrawingCanvas(
 
     Canvas(modifier = modifier
         .onSizeChanged { canvasSize = it }
-        .pointerInput(selectedColor, selectedWidth) {
+        .pointerInput(selectedColor, selectedWidth, selectedAlpha, isHighlighter) {
             detectDragGestures(
                 onDragStart = { offset -> 
                     currentPoints.add(offset)
@@ -1326,15 +1533,24 @@ fun DrawingCanvas(
                 onDragEnd = { 
                     if (canvasSize.width > 0 && canvasSize.height > 0) {
                         val normalized = currentPoints.map { Offset(it.x / canvasSize.width, it.y / canvasSize.height) }
-                        strokes.add(DrawingStroke(normalized, selectedColor, selectedWidth))
+                        strokes.add(
+                            DrawingStroke(
+                                points = normalized,
+                                color = selectedColor,
+                                width = selectedWidth,
+                                alpha = selectedAlpha,
+                                isHighlighter = isHighlighter,
+                                canvasWidth = canvasSize.width.toFloat()
+                            )
+                        )
                     }
                     currentPoints.clear()
                 }
             )
         }
     ) {
-        // Draw existing strokes
-        strokes.forEach { stroke ->
+        // 1. Draw Pen Strokes (Solid / Non-highlighter)
+        strokes.filter { !it.isHighlighter }.forEach { stroke ->
             val path = Path().apply {
                 if (stroke.points.isNotEmpty()) {
                     val start = stroke.points.first()
@@ -1342,16 +1558,86 @@ fun DrawingCanvas(
                     stroke.points.forEach { lineTo(it.x * size.width, it.y * size.height) }
                 }
             }
-            drawPath(path, stroke.color, style = Stroke(width = stroke.width, cap = StrokeCap.Round, join = StrokeJoin.Round))
+            drawPath(
+                path = path,
+                color = stroke.color.copy(alpha = stroke.alpha),
+                style = Stroke(
+                    width = stroke.width,
+                    cap = StrokeCap.Round,
+                    join = StrokeJoin.Round
+                ),
+                blendMode = BlendMode.SrcOver
+            )
         }
-        
-        // Draw current stroke
-        if (currentPoints.isNotEmpty()) {
+
+        if (currentPoints.isNotEmpty() && !isHighlighter) {
             val path = Path().apply {
                 moveTo(currentPoints.first().x, currentPoints.first().y)
                 currentPoints.forEach { lineTo(it.x, it.y) }
             }
-            drawPath(path, selectedColor, style = Stroke(width = selectedWidth, cap = StrokeCap.Round, join = StrokeJoin.Round))
+            drawPath(
+                path = path,
+                color = selectedColor.copy(alpha = selectedAlpha),
+                style = Stroke(
+                    width = selectedWidth,
+                    cap = StrokeCap.Round,
+                    join = StrokeJoin.Round
+                ),
+                blendMode = BlendMode.SrcOver
+            )
+        }
+
+        // 2. Draw Highlighter Strokes inside an Offscreen Capped Layer
+        // Capping total layer opacity at 0.70f (~3 overlaps max) so sketching over same spot stops darkening
+        val highlighterStrokes = strokes.filter { it.isHighlighter }
+        val hasActiveHighlighter = currentPoints.isNotEmpty() && isHighlighter
+        
+        if (highlighterStrokes.isNotEmpty() || hasActiveHighlighter) {
+            drawIntoCanvas { canvas ->
+                val layerPaint = Paint().apply {
+                    blendMode = BlendMode.Multiply
+                    alpha = 0.70f // Cap at ~3 overlaps maximum opacity
+                }
+                val bounds = androidx.compose.ui.geometry.Rect(0f, 0f, size.width, size.height)
+                canvas.saveLayer(bounds, layerPaint)
+                
+                highlighterStrokes.forEach { stroke ->
+                    val path = Path().apply {
+                        if (stroke.points.isNotEmpty()) {
+                            val start = stroke.points.first()
+                            moveTo(start.x * size.width, start.y * size.height)
+                            stroke.points.forEach { lineTo(it.x * size.width, it.y * size.height) }
+                        }
+                    }
+                    drawPath(
+                        path = path,
+                        color = stroke.color.copy(alpha = stroke.alpha.coerceAtMost(0.45f)),
+                        style = Stroke(
+                            width = stroke.width,
+                            cap = StrokeCap.Square,
+                            join = StrokeJoin.Round
+                        )
+                    )
+                }
+                
+                if (hasActiveHighlighter) {
+                    val path = Path().apply {
+                        moveTo(currentPoints.first().x, currentPoints.first().y)
+                        currentPoints.forEach { lineTo(it.x, it.y) }
+                    }
+                    drawPath(
+                        path = path,
+                        color = selectedColor.copy(alpha = selectedAlpha.coerceAtMost(0.45f)),
+                        style = Stroke(
+                            width = selectedWidth,
+                            cap = StrokeCap.Square,
+                            join = StrokeJoin.Round
+                        )
+                    )
+                }
+                
+                canvas.restore()
+            }
         }
     }
 }
@@ -1365,6 +1651,8 @@ fun ReaderPageContent(
     isDrawingMode: Boolean,
     selectedPenColor: Color,
     selectedPenWidth: Float,
+    selectedPenAlpha: Float,
+    isHighlighterMode: Boolean,
     isZoomMode: Boolean,
     scale: Float,
     offset: Offset,
@@ -1415,7 +1703,15 @@ fun ReaderPageContent(
         }
         
         if (isDrawingMode) {
-            DrawingCanvas(strokes, redos, selectedPenColor, selectedPenWidth, Modifier.fillMaxSize())
+            DrawingCanvas(
+                strokes = strokes,
+                redoList = redos,
+                selectedColor = selectedPenColor,
+                selectedWidth = selectedPenWidth,
+                selectedAlpha = selectedPenAlpha,
+                isHighlighter = isHighlighterMode,
+                modifier = Modifier.fillMaxSize()
+            )
         }
 
         if (isAiMode) {
